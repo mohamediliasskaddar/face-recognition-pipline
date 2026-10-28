@@ -183,6 +183,73 @@ def test_detect_rejects_invalid_model_bounding_box(
         detector.detect(np.zeros((20, 20, 3), dtype=np.uint8))
 
 
+def test_align_returns_crop_with_expected_shape_and_uses_five_landmarks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L'alignement appelle norm_crop et retourne un crop 112 × 112 × 3."""
+    calls: dict[str, object] = {}
+    aligned_crop = np.zeros((112, 112, 3), dtype=np.uint8)
+
+    def norm_crop(
+        image: NDArray[np.uint8],
+        *,
+        landmark: NDArray[np.float32],
+        image_size: int,
+    ) -> NDArray[np.uint8]:
+        calls["arguments"] = (image, landmark, image_size)
+        return aligned_crop
+
+    insightface_module = ModuleType("insightface")
+    utils_module = ModuleType("insightface.utils")
+    face_align_module = ModuleType("insightface.utils.face_align")
+    face_align_module.norm_crop = norm_crop
+    insightface_module.utils = utils_module
+    utils_module.face_align = face_align_module
+    monkeypatch.setitem(sys.modules, "insightface", insightface_module)
+    monkeypatch.setitem(sys.modules, "insightface.utils", utils_module)
+    monkeypatch.setitem(sys.modules, "insightface.utils.face_align", face_align_module)
+    monkeypatch.setattr(detection_module, "_create_analysis", lambda _: FakeFaceAnalysis([]))
+    detector = FaceDetector(make_config())
+    image = np.zeros((200, 300, 3), dtype=np.uint8)
+    landmarks = np.asarray(
+        [[100, 80], [140, 80], [120, 110], [105, 140], [135, 140]],
+        dtype=np.float32,
+    )
+
+    result = detector.align(image, landmarks)
+
+    assert result.shape == (112, 112, 3)
+    assert result.dtype == np.uint8
+    assert result is aligned_crop
+    arguments = calls["arguments"]
+    assert isinstance(arguments, tuple)
+    assert arguments[0] is image
+    assert arguments[1] is landmarks
+    assert arguments[2] == 112
+
+
+@pytest.mark.parametrize(
+    ("landmarks", "error_type", "message"),
+    [
+        (np.zeros((4, 2), dtype=np.float32), ValueError, "cinq points"),
+        (np.full((5, 2), np.nan, dtype=np.float32), ValueError, "cinq points finis"),
+        (np.zeros((5, 2), dtype=object), TypeError, "tableau numpy numérique"),
+    ],
+)
+def test_align_rejects_invalid_landmarks(
+    monkeypatch: pytest.MonkeyPatch,
+    landmarks: NDArray[object],
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    """Les landmarks mal formés sont refusés avant le chargement du modèle."""
+    monkeypatch.setattr(detection_module, "_create_analysis", lambda _: FakeFaceAnalysis([]))
+    detector = FaceDetector(make_config())
+
+    with pytest.raises(error_type, match=message):
+        detector.align(np.zeros((100, 100, 3), dtype=np.uint8), landmarks)
+
+
 def test_select_main_face_uses_area_times_detection_score() -> None:
     """Le visage principal est celui dont l'aire pondérée par le score est maximale."""
     large_moderate_score = make_face((0, 0, 100, 100), 0.7)

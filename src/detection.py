@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
 from src.config import AppConfig, ModelConfig, load_config
+
+
+class RecognitionModel(Protocol):
+    """Interface du modèle ArcFace chargé par FaceAnalysis."""
+
+    def get_feat(self, imgs: NDArray[np.uint8]) -> NDArray[np.float32]:
+        """Calcule l'embedding brut d'un visage aligné."""
 
 
 class DetectedFace(Protocol):
@@ -20,6 +27,8 @@ class DetectedFace(Protocol):
 
 class FaceAnalysisBackend(Protocol):
     """Interface minimale du moteur FaceAnalysis utilisé par le détecteur."""
+
+    models: dict[str, RecognitionModel]
 
     def prepare(self, *, ctx_id: int, det_size: tuple[int, int]) -> None:
         """Prépare les modèles InsightFace pour l'inférence."""
@@ -49,15 +58,28 @@ def _create_analysis(model_config: ModelConfig) -> FaceAnalysisBackend:
 class FaceDetector:
     """Détecte les visages et filtre les résultats selon la configuration."""
 
-    def __init__(self, config: AppConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig | None = None,
+        *,
+        analysis: FaceAnalysisBackend | None = None,
+    ) -> None:
         """Crée et prépare une seule fois le moteur InsightFace.
 
         Args:
             config: Configuration du pipeline. La configuration du projet est
                 chargée si elle n'est pas fournie.
+            analysis: Moteur déjà chargé à partager avec d'autres composants.
         """
         self._config = config if config is not None else load_config()
-        self._analysis = _create_analysis(self._config.model)
+        self._analysis = (
+            analysis if analysis is not None else _create_analysis(self._config.model)
+        )
+
+    @property
+    def analysis(self) -> FaceAnalysisBackend:
+        """Retourne le moteur pour le partager avec l'embedder."""
+        return self._analysis
 
     def detect(self, img_bgr: NDArray[np.uint8]) -> list[DetectedFace]:
         """Détecte les visages et retourne les détections valides par aire décroissante.
@@ -116,6 +138,54 @@ class FaceDetector:
 
         faces_with_areas.sort(key=lambda result: result[0], reverse=True)
         return [face for _, face in faces_with_areas]
+
+    def align(
+        self,
+        img_bgr: NDArray[np.uint8],
+        landmarks: NDArray[np.float32],
+    ) -> NDArray[np.uint8]:
+        """Aligne un visage et retourne un crop BGR de taille 112 × 112.
+
+        Args:
+            img_bgr: Image couleur BGR de type uint8.
+            landmarks: Cinq points faciaux (yeux, nez, et coins de la bouche),
+                de forme `(5, 2)`, tels que retournés par InsightFace.
+
+        Returns:
+            Crop facial aligné de forme `(112, 112, 3)` et de type uint8.
+
+        Raises:
+            TypeError: Si l'image ou les landmarks n'ont pas le type attendu.
+            ValueError: Si l'image, les landmarks ou le crop sont invalides.
+            ImportError: Si InsightFace n'est pas installé.
+        """
+        if not isinstance(img_bgr, np.ndarray) or img_bgr.dtype != np.uint8:
+            raise TypeError("L'image BGR doit être un tableau numpy de type uint8.")
+        if img_bgr.ndim != 3 or img_bgr.shape[2] != 3:
+            raise ValueError("L'image doit avoir trois dimensions et trois canaux BGR.")
+        if img_bgr.shape[0] == 0 or img_bgr.shape[1] == 0:
+            raise ValueError("L'image BGR ne peut pas être vide.")
+        if not isinstance(landmarks, np.ndarray) or not np.issubdtype(landmarks.dtype, np.number):
+            raise TypeError("Les landmarks doivent être un tableau numpy numérique.")
+        if landmarks.shape != (5, 2) or not np.isfinite(landmarks).all():
+            raise ValueError("Les landmarks doivent contenir cinq points finis de forme (5, 2).")
+
+        try:
+            from insightface.utils.face_align import norm_crop
+        except ImportError as error:
+            raise ImportError(
+                "InsightFace est requis pour aligner les visages. "
+                "Installez les dépendances depuis requirements.txt."
+            ) from error
+
+        aligned = norm_crop(img_bgr, landmark=landmarks, image_size=112)
+        if (
+            not isinstance(aligned, np.ndarray)
+            or aligned.shape != (112, 112, 3)
+            or aligned.dtype != np.uint8
+        ):
+            raise ValueError("InsightFace a retourné un crop aligné invalide.")
+        return aligned
 
 
 def select_main_face(faces: list[DetectedFace]) -> DetectedFace:

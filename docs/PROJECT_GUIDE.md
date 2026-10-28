@@ -38,7 +38,7 @@ photos, qui peuvent varier en éclairage, pose ou arrière-plan.
 |---|---|---|
 | `configs/config.yaml` et `src/config.py` | Préparés | Paramètres du modèle, seuils et chemins chargés dans des dataclasses typées. |
 | `src/io_utils.py` | Implémenté | Liste les images, corrige leur orientation EXIF, les lit en BGR et permet de les enregistrer. |
-| `src/detection.py` | En cours à l'étape 2 | Initialise InsightFace, détecte les visages, applique les filtres et sélectionne un visage principal. |
+| `src/detection.py` | Étapes 2–3 implémentées | Initialise InsightFace, détecte et filtre les visages, aligne un visage en crop `112 × 112` et sélectionne un visage principal. |
 | `src/types.py` | À compléter | Contiendra les structures partagées, dont `FaceRecord` et `MatchResult`. |
 | `src/embedding.py` | À compléter | Transformera un visage aligné en vecteur numérique. |
 | `src/gallery.py` | À compléter | Indexera les visages de toutes les images et réutilisera un cache. |
@@ -90,11 +90,24 @@ est `aire de la boîte × score de détection`. Une liste vide provoque une erre
 explicite. Ce choix par défaut ne supprime pas les autres visages de la galerie :
 ils doivent rester disponibles pour la recherche multi-visages.
 
+### Alignement
+
+`align(img_bgr, landmarks)` utilise les cinq repères fournis par InsightFace
+(yeux, nez et coins de la bouche) et `insightface.utils.face_align.norm_crop`
+avec `image_size=112`. Le résultat est un tableau BGR `uint8` de forme
+`(112, 112, 3)`. Cette transformation remet les visages à une taille et une pose
+comparables avant de calculer leurs embeddings.
+
+La méthode vérifie la forme et les valeurs des landmarks ainsi que la forme du
+crop retourné. Cela évite de transmettre silencieusement une entrée ou sortie
+invalide aux prochaines étapes.
+
 ### Tests sans téléchargement des modèles
 
 Les tests unitaires remplacent le moteur InsightFace par un faux détecteur. Ils
-vérifient la configuration transmise, les filtres, l'ordre par aire, les entrées
-invalides et la sélection du visage principal sans télécharger les poids.
+vérifient la configuration transmise, les filtres, l'ordre par aire, la forme
+du crop aligné, les entrées invalides et la sélection du visage principal sans
+télécharger les poids.
 Cela valide la logique Python, mais ne prouve pas encore que les modèles
 détectent correctement les visages de la galerie. La validation visuelle avec le
 vrai modèle reste nécessaire pour le critère « Done quand » de l'étape 2.
@@ -103,7 +116,8 @@ vrai modèle reste nécessaire pour le critère « Done quand » de l'étape 2.
 
 1. **Détection** : examiner les boîtes et landmarks sur des images réelles et
    confirmer la qualité de détection.
-2. **Alignement** : normaliser les visages en crops `112 × 112`.
+2. **Alignement** : implémenté dans `FaceDetector.align`; la comparaison visuelle
+   des crops dans le notebook reste à faire.
 3. **Embeddings** : produire des vecteurs `float32` normalisés L2.
 4. **Galerie et cache** : calculer les embeddings de galerie une fois, puis les
    réutiliser.
