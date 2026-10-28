@@ -1,5 +1,3 @@
-"""Chargement et validation de la configuration du pipeline."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

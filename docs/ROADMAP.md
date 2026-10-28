@@ -48,7 +48,7 @@
 **Objectif** : connaître la galerie et créer la vérité terrain.
 
 **Tâches**
-1. Placer ~30 images dans `data/gallery/`, la requête dans `data/query/`.
+1. Placer ~30 images dans `data/gallery/`, la requête dans `data/query/`.(i did it manually )
 2. Implémenter `src/io_utils.py` : `list_images(folder)`, `read_image(path)` (BGR, gestion EXIF orientation), `save_image`.
 3. Notebook `01_exploration_data.ipynb` : afficher la galerie en mosaïque, résolutions, nombre approximatif de visages.
 4. Créer `data/labels.csv` à la main : `filename,person_id` (une ligne par image, plusieurs `person_id` si plusieurs personnes → utiliser `;` ou plusieurs lignes).

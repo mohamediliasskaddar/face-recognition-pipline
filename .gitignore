@@ -6,3 +6,5 @@ data/cache/
 outputs/
 .pytest_cache/
 .ruff_cache/
+z-archive/
+venv/
