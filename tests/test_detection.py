@@ -11,7 +11,21 @@ from numpy.typing import NDArray
 
 import src.detection as detection_module
 from src.config import AppConfig, ModelConfig, load_config
-from src.detection import DetectedFace, FaceAnalysisBackend, FaceDetector, select_main_face
+from src.detection import (
+    DetectedFace,
+    FaceAnalysisBackend,
+    FaceDetector,
+    RecognitionModel,
+    select_main_face,
+)
+
+
+class FakeRecognitionModel:
+    """Faux modèle ArcFace nécessaire à la structure FaceAnalysis partagée."""
+
+    def get_feat(self, imgs: NDArray[np.uint8]) -> NDArray[np.float32]:
+        """Retourne un embedding nul factice."""
+        return np.zeros((1, 512), dtype=np.float32)
 
 
 class FakeFaceAnalysis:
@@ -21,6 +35,7 @@ class FakeFaceAnalysis:
         self.faces = faces
         self.images_received: list[NDArray[np.uint8]] = []
         self.prepared_with: tuple[int, tuple[int, int]] | None = None
+        self.models: dict[str, RecognitionModel] = {"recognition": FakeRecognitionModel()}
 
     def prepare(self, *, ctx_id: int, det_size: tuple[int, int]) -> None:
         """Imite la préparation du moteur InsightFace."""
@@ -88,6 +103,7 @@ def test_create_analysis_uses_configured_insightface_model(
     class FakeInsightFace:
         def __init__(self, *, name: str, providers: list[str]) -> None:
             calls["constructor"] = (name, providers)
+            self.models = {"recognition": FakeRecognitionModel()}
 
         def prepare(self, *, ctx_id: int, det_size: tuple[int, int]) -> None:
             calls["prepare"] = (ctx_id, det_size)

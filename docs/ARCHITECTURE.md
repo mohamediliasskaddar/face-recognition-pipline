@@ -97,11 +97,23 @@ class MatchResult:
 
 ### `embedding.py`
 - `class FaceEmbedder(ABC)` avec `embed(aligned_face) -> np.ndarray`.
-- `InsightFaceEmbedder` (défaut) et `FacenetEmbedder` (alternative).
+- `InsightFaceEmbedder` extrait l'embedding ArcFace avec le modèle `recognition`
+  de `FaceAnalysis`, puis retourne un vecteur `(512,)` normalisé L2 en `float32`.
+- Si `FaceAnalysis.get` a déjà produit `face.normed_embedding`, l'indexeur le
+  réutilise pour éviter une deuxième inférence ArcFace sur le même visage.
+- Le moteur `FaceAnalysis` peut être partagé avec `FaceDetector` via son argument
+  `analysis`, afin d'éviter de charger les modèles deux fois.
+- `FacenetEmbedder` est une alternative prévue, mais pas encore implémentée.
 
 ### `gallery.py`
-- `build_gallery_index(folder) -> list[FaceRecord]` : traite chaque image (plusieurs visages possibles).
-- `save_cache / load_cache` : `data/cache/embeddings.npz` (invalidé si les fichiers changent, via hash).
+- `build_gallery_index(folder, detector, embedder) -> list[FaceRecord]` : traite
+  chaque image et crée un enregistrement par visage, même si plusieurs visages
+  apparaissent sur la même photo.
+- Les fichiers illisibles et images sans visage sont ignorés avec un avertissement;
+  la progression est affichée avec `tqdm`.
+- `save_cache / load_cache` : `data/cache/embeddings.npz`, contenant embeddings,
+  crops et métadonnées sans pickle. Le cache est invalidé si un nom/contenu de
+  galerie ou un paramètre de détection/embedding change.
 
 ### `matching.py`
 - `cosine_similarity_matrix(query_emb, gallery_embs) -> np.ndarray`.

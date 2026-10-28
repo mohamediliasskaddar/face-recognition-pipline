@@ -39,9 +39,9 @@ photos, qui peuvent varier en éclairage, pose ou arrière-plan.
 | `configs/config.yaml` et `src/config.py` | Préparés | Paramètres du modèle, seuils et chemins chargés dans des dataclasses typées. |
 | `src/io_utils.py` | Implémenté | Liste les images, corrige leur orientation EXIF, les lit en BGR et permet de les enregistrer. |
 | `src/detection.py` | Étapes 2–3 implémentées | Initialise InsightFace, détecte et filtre les visages, aligne un visage en crop `112 × 112` et sélectionne un visage principal. |
-| `src/types.py` | À compléter | Contiendra les structures partagées, dont `FaceRecord` et `MatchResult`. |
-| `src/embedding.py` | À compléter | Transformera un visage aligné en vecteur numérique. |
-| `src/gallery.py` | À compléter | Indexera les visages de toutes les images et réutilisera un cache. |
+| `src/embedding.py` | Code de l'étape 4 implémenté | Extrait un vecteur ArcFace `(512,)`, normalisé L2 en `float32`, à partir d'un crop aligné. La séparation des identités sur le jeu réel reste à confirmer. |
+| `src/types.py` | Étape 5 implémentée | Définit `FaceRecord` pour stocker le chemin, la boîte, les landmarks, le score, le crop aligné et l'embedding, ainsi que `MatchResult`. |
+| `src/gallery.py` | Étape 5 implémentée | Construit un enregistrement par visage, ignore les images illisibles/sans visage avec avertissement, et recharge le cache NPZ s'il correspond à la galerie et à la configuration. |
 | `src/matching.py` et `src/identity.py` | À compléter | Compareront les vecteurs, agrégeront les scores par image et géreront les identités récurrentes. |
 | `src/pipeline.py` et `src/main.py` | À compléter | Relieront les composants pour exécuter une recherche de bout en bout. |
 | `src/visualization.py` et `src/evaluation.py` | À compléter | Aideront à examiner les résultats et mesurer précision/rappel. |
@@ -102,15 +102,111 @@ La méthode vérifie la forme et les valeurs des landmarks ainsi que la forme du
 crop retourné. Cela évite de transmettre silencieusement une entrée ou sortie
 invalide aux prochaines étapes.
 
+## Extraction des embeddings
+
+`FaceEmbedder` définit l'interface commune; `InsightFaceEmbedder` est son backend
+ArcFace. La méthode `embed` prend un crop BGR `uint8` de forme `(112, 112, 3)`,
+appelle directement `get_feat` du modèle de reconnaissance et retourne un
+vecteur `float32` de 512 valeurs, normalisé L2.
+
+L'extracteur rejette les crops d'une autre forme, les sorties ArcFace mal
+dimensionnées ou non finies, et les vecteurs nuls qui ne peuvent pas être
+normalisés.
+
+Pour ne charger `FaceAnalysis` qu'une seule fois, partager son instance entre les
+deux composants :
+
+```python
+from src.detection import FaceDetector
+from src.embedding import InsightFaceEmbedder
+
+embedder = InsightFaceEmbedder()
+detector = FaceDetector(analysis=embedder.analysis)
+```
+
+Le moteur contient alors le détecteur et le modèle ArcFace de `buffalo_l`. Pour
+chaque visage, `detector.detect(image)` donne ses repères; `detector.align(image,
+face.kps)` produit le crop qui est passé à `embedder.embed(crop)`.
+
 ### Tests sans téléchargement des modèles
 
 Les tests unitaires remplacent le moteur InsightFace par un faux détecteur. Ils
 vérifient la configuration transmise, les filtres, l'ordre par aire, la forme
-du crop aligné, les entrées invalides et la sélection du visage principal sans
-télécharger les poids.
+du crop aligné, la dimension et la normalisation L2 des embeddings, les entrées
+invalides et la sélection du visage principal sans télécharger les poids.
 Cela valide la logique Python, mais ne prouve pas encore que les modèles
 détectent correctement les visages de la galerie. La validation visuelle avec le
 vrai modèle reste nécessaire pour le critère « Done quand » de l'étape 2.
+
+### Vérification réelle des embeddings
+
+Une image de galerie a été passée dans la chaîne réelle détection → alignement →
+ArcFace. Le résultat était un embedding `(512,)` en `float32` de norme L2 `1.0`.
+Sur cette image, son cosinus avec l'embedding natif normalisé de FaceAnalysis
+était aussi `1.0`, ce qui confirme que l'extraction utilise la même représentation
+que le modèle InsightFace.
+
+Une vérification exploratoire de 29 images regroupées selon l'identifiant écrit
+dans leur nom de fichier n'a toutefois pas montré une séparation nette entre
+paires du même groupe et paires de groupes différents. Les noms de fichiers ne
+remplacent pas une vérité terrain vérifiée; `data/labels.csv` ne contient encore
+que son en-tête. Le code d'extraction est donc fonctionnel, mais le critère
+qualitatif de l'étape 4 n'est pas encore confirmé. Il faut vérifier visuellement
+les identités et compléter les labels avant de conclure que les embeddings
+distinguent correctement ces personnes.
+
+## Indexation de la galerie et cache
+
+`build_gallery_index(folder, detector, embedder)` parcourt les fichiers reconnus
+dans la galerie avec une barre de progression. Pour chaque image, le détecteur
+retourne tous les visages qui passent ses seuils; chacun est ensuite aligné,
+encodé et sauvegardé dans un `FaceRecord`. Avec InsightFace, `FaceAnalysis.get`
+a déjà calculé l'embedding ArcFace avec la détection : l'indexeur réutilise son
+`normed_embedding` au lieu de lancer une seconde inférence sur le crop. Les
+autres implémentations de `FaceEmbedder` reçoivent le crop aligné. Une image peut
+ainsi produire zéro, un ou plusieurs enregistrements.
+
+Les images illisibles et celles où aucun visage n'est détecté sont ignorées et
+signalées dans le journal. Les erreurs du détecteur, de l'alignement ou du modèle
+d'embedding ne sont pas cachées : elles remontent à l'appelant.
+
+Par défaut, l'index est mis en cache dans
+`configs/config.yaml` → `paths.cache_dir` → `embeddings.npz` (actuellement
+`data/cache/embeddings.npz`). Le fichier NPZ compressé contient les embeddings,
+les crops et les métadonnées nécessaires aux `FaceRecord`. Il est écrit de
+manière atomique et lu sans activer le pickle.
+
+Avant réutilisation, le code recalcule une empreinte SHA-256 des noms, dates de
+modification et octets de toutes les images. Il compare aussi l'empreinte de la configuration
+du détecteur, du modèle et du backend d'embedding. Si la galerie ou ces
+paramètres ont changé, l'index est reconstruit. Au deuxième passage valide,
+les images ne sont pas redétectées et les embeddings ne sont pas recalculés.
+Le calcul de l'empreinte relit cependant les fichiers de galerie.
+
+Exemple d'appel en réutilisant une seule instance InsightFace :
+
+```python
+from src.detection import FaceDetector
+from src.embedding import InsightFaceEmbedder
+from src.gallery import build_gallery_index
+
+embedder = InsightFaceEmbedder()
+detector = FaceDetector(analysis=embedder.analysis)
+records = build_gallery_index("data/gallery", detector, embedder)
+print(f"{len(records)} visages indexés")
+```
+
+Le chemin du cache peut être remplacé pour un test ou un usage ponctuel :
+`build_gallery_index(..., cache_path=Path("/chemin/vers/cache.npz"))`.
+
+### Vérification réelle de l'étape 5
+
+L'indexeur a été exécuté sur les 29 images actuellement dans `data/gallery`.
+Le moteur a détecté et indexé 29 visages. Le cache a ensuite été rechargé avec
+29 enregistrements en environ `0,08 s`, sans nouvelle inférence ArcFace; la
+première indexation a pris environ `59,93 s` sur l'environnement de travail.
+Ces durées dépendent de la machine, mais le second passage confirme que les
+embeddings ne sont pas recalculés.
 
 ## Suite des étapes
 
@@ -118,9 +214,11 @@ vrai modèle reste nécessaire pour le critère « Done quand » de l'étape 2.
    confirmer la qualité de détection.
 2. **Alignement** : implémenté dans `FaceDetector.align`; la comparaison visuelle
    des crops dans le notebook reste à faire.
-3. **Embeddings** : produire des vecteurs `float32` normalisés L2.
-4. **Galerie et cache** : calculer les embeddings de galerie une fois, puis les
-   réutiliser.
+3. **Embeddings** : implémenté pour produire des vecteurs `float32` normalisés L2;
+   le critère métier de comparaison de paires réelles reste à vérifier avec des
+   identités confirmées.
+4. **Galerie et cache** : implémenté et vérifié sur les 29 images; une deuxième
+   exécution recharge les 29 enregistrements sans nouvelle inférence.
 5. **Recherche** : comparer les embeddings par similarité cosinus et retenir le
    meilleur visage de chaque image.
 6. **Identité et pipeline** : élargir éventuellement la recherche, exporter les

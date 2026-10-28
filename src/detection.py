@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,6 +23,7 @@ class DetectedFace(Protocol):
     bbox: NDArray[np.float32]
     kps: NDArray[np.float32]
     det_score: float
+    normed_embedding: NDArray[np.float32] | None
 
 
 class FaceAnalysisBackend(Protocol):
@@ -72,14 +73,17 @@ class FaceDetector:
             analysis: Moteur déjà chargé à partager avec d'autres composants.
         """
         self._config = config if config is not None else load_config()
-        self._analysis = (
-            analysis if analysis is not None else _create_analysis(self._config.model)
-        )
+        self._analysis = analysis if analysis is not None else _create_analysis(self._config.model)
 
     @property
     def analysis(self) -> FaceAnalysisBackend:
         """Retourne le moteur pour le partager avec l'embedder."""
         return self._analysis
+
+    @property
+    def config(self) -> AppConfig:
+        """Retourne la configuration utilisée pour la détection."""
+        return self._config
 
     def detect(self, img_bgr: NDArray[np.uint8]) -> list[DetectedFace]:
         """Détecte les visages et retourne les détections valides par aire décroissante.

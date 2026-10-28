@@ -7,5 +7,6 @@ scikit-learn>=1.4
 matplotlib>=3.8
 pyyaml>=6.0
 loguru>=0.7
+tqdm>=4.66
 pytest>=8.0
 ruff>=0.4

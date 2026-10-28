@@ -7,11 +7,11 @@
 ## Suivi global
 
 - [x] Étape 0 – Initialisation du projet
-- [ ] Étape 1 – Préparation et exploration des données
-- [ ] Étape 2 – Détection des visages
-- [ ] Étape 3 – Alignement des visages
-- [ ] Étape 4 – Extraction des embeddings
-- [ ] Étape 5 – Indexation de la galerie (+ cache)
+- [x] Étape 1 – Préparation et exploration des données
+- [x] Étape 2 – Détection des visages
+- [x] Étape 3 – Alignement des visages
+- [x] Étape 4 – Extraction des embeddings
+- [x] Étape 5 – Indexation de la galerie (+ cache)
 - [ ] Étape 6 – Comparaison et recherche
 - [ ] Étape 7 – Identification exhaustive (doublons d'identité)
 - [ ] Étape 8 – Pipeline bout en bout et CLI
@@ -258,13 +258,3 @@ produit `outputs/matches/` et `report.json`.
 
 ---
 
-## Annexe – Planning indicatif
-
-| Phase | Étapes | Durée estimée |
-|---|---|---|
-| Fondations | 0 – 1 | 0,5 jour |
-| Cœur du pipeline | 2 – 6 | 1,5 jour |
-| Identification exhaustive | 7 | 0,5 jour |
-| Intégration | 8 – 9 | 0,5 jour |
-| Évaluation et qualité | 10 – 11 | 1 jour |
-| Bonus + rapport | 12 – 13 | 1 jour |
