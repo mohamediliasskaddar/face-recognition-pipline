@@ -1,0 +1,10 @@
+numpy>=1.26
+opencv-python>=4.9
+insightface>=0.7.3
+onnxruntime>=1.17
+scikit-learn>=1.4
+matplotlib>=3.8
+pyyaml>=6.0
+loguru>=0.7
+pytest>=8.0
+ruff>=0.4
