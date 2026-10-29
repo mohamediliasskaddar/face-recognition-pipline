@@ -42,16 +42,27 @@ photos, qui peuvent varier en éclairage, pose ou arrière-plan.
 | `src/embedding.py` | Code de l'étape 4 implémenté | Extrait un vecteur ArcFace `(512,)`, normalisé L2 en `float32`, à partir d'un crop aligné. La séparation des identités sur le jeu réel reste à confirmer. |
 | `src/types.py` | Étape 5 implémentée | Définit `FaceRecord` pour stocker le chemin, la boîte, les landmarks, le score, le crop aligné et l'embedding, ainsi que `MatchResult`. |
 | `src/gallery.py` | Étape 5 implémentée | Construit un enregistrement par visage, ignore les images illisibles/sans visage avec avertissement, et recharge le cache NPZ s'il correspond à la galerie et à la configuration. |
-| `src/matching.py` | Étape 6 implémentée | Calcule les similarités cosinus avec NumPy, retient le meilleur visage de chaque image et trie les résultats au-dessus du seuil. Tests synthétiques ajoutés; le top-10 réel reste à vérifier visuellement. |
-| `src/identity.py` | Code de l'étape 7 implémenté | Peut élargir la requête et ajouter les images de son cluster. Chaque stratégie est activable indépendamment; la comparaison précision/rappel reste à faire avec des identités annotées. |
+| `src/matching.py` | Étape 6 terminée | Calcule les similarités cosinus avec NumPy, retient le meilleur visage de chaque image et trie les résultats au-dessus du seuil. Tests synthétiques verts et aperçu réel vérifié visuellement. |
+| `src/identity.py` | Étape 7 terminée | L'expansion de requête et le clustering sont activables indépendamment; les trois variantes ont été comparées sur les identités annotées. |
 | `src/pipeline.py` et `src/main.py` | Étape 8 implémentée | Lancent la recherche depuis Python ou la CLI, gèrent le choix du visage, les erreurs et exportent `matches/` et `report.json`. Seul InsightFace est actuellement disponible. |
 | `src/visualization.py` | Étape 9 implémentée | Annote les visages, exporte la grille requête/résultats et la heatmap cosinus de la galerie. |
-| `src/evaluation.py` | À compléter | Mesurera précision/rappel et aidera à calibrer le seuil à partir des labels. |
+| `src/evaluation.py` | Étape 10 terminée | Lit les IDs annotés, calcule précision/rappel/F1, balaie les seuils avec plusieurs requêtes et calcule ROC/EER sur les paires d'images distinctes. Tests synthétiques verts; seuil 0,40 retenu. |
+| `tests/` | Étape 11 terminée | 87 tests passent. Les fixtures vérifient le détecteur réel sur une image sans visage et un montage à trois visages, et le pipeline sur quatre images de galerie. Si les poids InsightFace ne sont pas déjà installés localement, seuls ces tests d'intégration réels sont ignorés; aucun téléchargement automatique n'est lancé. Ruff et Black passent. |
 
-Les images de galerie et la photo requête ont été ajoutées aux données du projet.
-La création/validation de `labels.csv` et l'exploration visuelle dans le notebook
-restent à confirmer avant de considérer toute l'étape de préparation des données
-comme terminée.
+Les 29 images de galerie sont couvertes par `labels.csv`. Les valeurs
+`person_id` ont été confirmées comme intentionnelles; les tokens `Person_XX` des
+noms de fichiers ne sont pas la vérité terrain. Le balayage macro porte sur les
+10 identités ayant au moins deux images indexées; les identités singleton ne
+peuvent pas servir de requête d'évaluation.
+
+Sur le cache validé contre la galerie et la configuration actuelles, précision,
+rappel et F1 macro sont tous à 1,00 pour chaque seuil de 0,20 à 0,70. Le seuil
+0,40 déjà configuré est donc conservé plutôt que de choisir arbitrairement une
+autre valeur parmi les ex-aequo. La ROC comporte 12 paires positives et 394
+négatives, avec EER 0,00. À 0,40, seuil seul, expansion de requête et clustering
+obtiennent chacun P/R/F1 = 1,00 sur les 10 requêtes. Ce petit jeu ne permet pas
+de généraliser ces scores. Le notebook `03_analyse_seuils.ipynb` reproduit le
+balayage, la comparaison, les courbes et l'inspection visuelle des erreurs.
 
 ## Fonctionnement du détecteur
 

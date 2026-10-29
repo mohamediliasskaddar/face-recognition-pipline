@@ -12,12 +12,12 @@
 - [x] Étape 3 – Alignement des visages
 - [x] Étape 4 – Extraction des embeddings
 - [x] Étape 5 – Indexation de la galerie (+ cache)
-- [ ] Étape 6 – Comparaison et recherche
-- [ ] Étape 7 – Identification exhaustive (doublons d'identité)
+- [x] Étape 6 – Comparaison et recherche
+- [x] Étape 7 – Identification exhaustive (doublons d'identité)
 - [x] Étape 8 – Pipeline bout en bout et CLI
 - [x] Étape 9 – Visualisation et export des résultats
-- [ ] Étape 10 – Évaluation et calibration du seuil
-- [ ] Étape 11 – Tests et robustesse
+- [x] Étape 10 – Évaluation et calibration du seuil
+- [x] Étape 11 – Tests et robustesse
 - [ ] Étape 12 – Interface Streamlit (bonus)
 - [ ] Étape 13 – Rapport final et livrables
 

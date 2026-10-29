@@ -67,18 +67,10 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
 
 def _value(section: dict[str, Any], key: str, expected_type: type) -> Any:
     value = section.get(key)
-    if (
-        expected_type is float
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-    ):
+    if expected_type is float and isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
-    if not isinstance(value, expected_type) or (
-        expected_type is int and isinstance(value, bool)
-    ):
-        raise ConfigError(
-            f"La valeur '{key}' doit être de type {expected_type.__name__}."
-        )
+    if not isinstance(value, expected_type) or (expected_type is int and isinstance(value, bool)):
+        raise ConfigError(f"La valeur '{key}' doit être de type {expected_type.__name__}.")
     return value
 
 
@@ -100,8 +92,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ConfigError: Si le YAML ou une de ses valeurs est invalide.
     """
     project_root = Path(__file__).resolve().parents[1]
-    source_path = Path(config_path) if config_path is not None else (
-        project_root / "configs" / "config.yaml"
+    source_path = (
+        Path(config_path) if config_path is not None else (project_root / "configs" / "config.yaml")
     )
 
     try:
@@ -154,9 +146,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             use_query_expansion=_value(matching_data, "use_query_expansion", bool),
             expansion_top_k=_value(matching_data, "expansion_top_k", int),
             use_gallery_clustering=_value(matching_data, "use_gallery_clustering", bool),
-            cluster_distance_threshold=_value(
-                matching_data, "cluster_distance_threshold", float
-            ),
+            cluster_distance_threshold=_value(matching_data, "cluster_distance_threshold", float),
         ),
         paths=PathsConfig(
             cache_dir=project_path("cache_dir"),

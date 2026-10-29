@@ -165,9 +165,7 @@ def resolve_identity(
 
     if cfg.matching.use_query_expansion:
         safe_matches = [
-            match
-            for match in base_matches
-            if match.best_score > threshold + QUERY_EXPANSION_MARGIN
+            match for match in base_matches if match.best_score > threshold + QUERY_EXPANSION_MARGIN
         ]
         if safe_matches:
             expanded_query = expand_query(

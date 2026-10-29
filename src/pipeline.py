@@ -147,9 +147,7 @@ def run(
 
     selected_index = _select_query_face_index(face_index, len(query_faces))
     query_face = (
-        query_faces[selected_index]
-        if selected_index is not None
-        else select_main_face(query_faces)
+        query_faces[selected_index] if selected_index is not None else select_main_face(query_faces)
     )
     if len(query_faces) > 1:
         logger.info(
@@ -174,9 +172,7 @@ def run(
         use_cache=use_cache,
     )
     if not records:
-        raise PipelineError(
-            f"Aucun visage exploitable n'a été indexé dans la galerie '{gallery}'."
-        )
+        raise PipelineError(f"Aucun visage exploitable n'a été indexé dans la galerie '{gallery}'.")
 
     matches = resolve_identity(query_embedding, records, cfg)
     output_matches_dir = output / "matches"

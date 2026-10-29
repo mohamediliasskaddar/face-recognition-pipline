@@ -34,9 +34,7 @@ def cosine_similarity_matrix(
     if queries.shape[1] == 0 or gallery.shape[1] == 0:
         raise ValueError("Les embeddings doivent contenir au moins une dimension.")
     if queries.shape[1] != gallery.shape[1]:
-        raise ValueError(
-            "Les embeddings de requête et de galerie doivent avoir la même dimension."
-        )
+        raise ValueError("Les embeddings de requête et de galerie doivent avoir la même dimension.")
     if not np.isfinite(queries).all() or not np.isfinite(gallery).all():
         raise ValueError("Les embeddings doivent contenir uniquement des valeurs finies.")
 
@@ -81,9 +79,7 @@ def match_images(
     if any(embedding.ndim != 1 for embedding in embeddings):
         raise ValueError("Chaque embedding galerie doit être un vecteur de forme (D,).")
     if any(embedding.size != query.size for embedding in embeddings):
-        raise ValueError(
-            "Les embeddings de requête et de galerie doivent avoir la même dimension."
-        )
+        raise ValueError("Les embeddings de requête et de galerie doivent avoir la même dimension.")
 
     similarities = cosine_similarity_matrix(query, np.stack(embeddings))[0]
     face_indices: dict[str, int] = {}

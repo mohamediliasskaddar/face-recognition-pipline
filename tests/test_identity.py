@@ -155,11 +155,14 @@ def test_resolve_identity_clustering_is_independent_and_preserves_face_index() -
             1,
         )
     ]
-    assert resolve_identity(
-        query,
-        records,
-        replace(config, matching=replace(config.matching, use_gallery_clustering=False)),
-    ) == []
+    assert (
+        resolve_identity(
+            query,
+            records,
+            replace(config, matching=replace(config.matching, use_gallery_clustering=False)),
+        )
+        == []
+    )
 
 
 def test_resolve_identity_returns_threshold_matches_when_strategies_disabled() -> None:
