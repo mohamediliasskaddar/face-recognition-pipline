@@ -18,7 +18,7 @@
 - [x] Étape 9 – Visualisation et export des résultats
 - [x] Étape 10 – Évaluation et calibration du seuil
 - [x] Étape 11 – Tests et robustesse
-- [ ] Étape 12 – Interface Streamlit (bonus)
+- [x] Étape 12 – Interface Streamlit (bonus)
 - [ ] Étape 13 – Rapport final et livrables
 
 ---

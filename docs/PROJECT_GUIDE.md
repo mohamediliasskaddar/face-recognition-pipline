@@ -47,7 +47,8 @@ photos, qui peuvent varier en éclairage, pose ou arrière-plan.
 | `src/pipeline.py` et `src/main.py` | Étape 8 implémentée | Lancent la recherche depuis Python ou la CLI, gèrent le choix du visage, les erreurs et exportent `matches/` et `report.json`. Seul InsightFace est actuellement disponible. |
 | `src/visualization.py` | Étape 9 implémentée | Annote les visages, exporte la grille requête/résultats et la heatmap cosinus de la galerie. |
 | `src/evaluation.py` | Étape 10 terminée | Lit les IDs annotés, calcule précision/rappel/F1, balaie les seuils avec plusieurs requêtes et calcule ROC/EER sur les paires d'images distinctes. Tests synthétiques verts; seuil 0,40 retenu. |
-| `tests/` | Étape 11 terminée | 87 tests passent. Les fixtures vérifient le détecteur réel sur une image sans visage et un montage à trois visages, et le pipeline sur quatre images de galerie. Si les poids InsightFace ne sont pas déjà installés localement, seuls ces tests d'intégration réels sont ignorés; aucun téléchargement automatique n'est lancé. Ruff et Black passent. |
+| `tests/` | Étape 11 terminée | Les tests couvrent les fixtures réelles, les cas limites et l'UI; la suite complète passe. Si les poids InsightFace ne sont pas déjà installés localement, seuls les tests d'intégration réels sont ignorés; aucun téléchargement automatique n'est lancé. Ruff et Black passent. |
+| `app/streamlit_app.py` | Étape 12 terminée | Interface Streamlit avec upload contrôlé, aperçu, chemin de galerie local, seuil réglable, cache activable, grille des résultats et archive ZIP. |
 
 Les 29 images de galerie sont couvertes par `labels.csv`. Les valeurs
 `person_id` ont été confirmées comme intentionnelles; les tokens `Person_XX` des
