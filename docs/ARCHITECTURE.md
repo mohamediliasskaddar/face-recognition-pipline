@@ -118,14 +118,19 @@ class MatchResult:
 ### `matching.py`
 - `cosine_similarity_matrix(query_emb, gallery_embs) -> np.ndarray`.
 - `match_images(query_emb, records, threshold) -> list[MatchResult]` : agrège par image (max sur ses visages), filtre par seuil, trie par score décroissant.
+- La matrice accepte une requête `(D,)` ou plusieurs requêtes `(Q, D)` et une galerie `(N, D)`; les vecteurs sont normalisés lors du calcul. Les embeddings vides, non finis, de norme nulle ou de dimensions incompatibles produisent une erreur explicite.
+- `match_images` retourne l'index zéro-based du visage gagnant au sein de son image; le seuil est inclusif.
 
 ### `identity.py`
-- `expand_query(query_emb, top_matches, k) -> np.ndarray` : moyenne des embeddings les plus sûrs.
-- `cluster_gallery(records, distance_threshold) -> labels` : clustering agglomératif cosinus.
-- `resolve_identity(query_emb, records, cfg) -> list[MatchResult]` : combine seuil + expansion + cluster pour gérer les **doublons d'identité**.
+- `expand_query(query_emb, top_matches, records, k) -> np.ndarray` : moyenne normalisée de la requête et des embeddings des meilleures correspondances.
+- `cluster_gallery(records, distance_threshold) -> labels` : produit une étiquette par visage avec AgglomerativeClustering, distance cosinus et linkage moyen.
+- `resolve_identity(query_emb, records, cfg) -> list[MatchResult]` : démarre par le seuil puis ajoute les résultats de l'expansion et/ou du cluster selon les interrupteurs de configuration. L'expansion exige un score strictement supérieur à `threshold + 0.05`; le clustering insère la requête comme premier vecteur pour sélectionner son cluster.
+- Chaque stratégie peut être désactivée indépendamment via `matching.use_query_expansion` et `matching.use_gallery_clustering`. Les stratégies ajoutent des candidats sans retirer les résultats initiaux.
 
 ### `pipeline.py`
-- `run(query_path, gallery_dir, output_dir, cfg) -> list[MatchResult]`.
+- `run(query_path, gallery_dir, output_dir, cfg, *, face_index=None, use_cache=True) -> list[MatchResult]`.
+- Le pipeline partage une seule instance InsightFace entre détection et embedding, sélectionne le visage principal par défaut ou le visage zéro-based demandé, construit/recharge l'index galerie, appelle `resolve_identity`, copie les résultats dans `matches/` et écrit `report.json`.
+- Un dossier de galerie sans image ou sans visage indexable et une requête sans visage sont des erreurs explicites. Une recherche sans correspondance est un résultat valide : `matches/` et un rapport avec une liste vide sont produits.
 
 ### `evaluation.py`
 - `evaluate(results, labels_csv, query_person_id) -> dict` : P, R, F1.
@@ -164,8 +169,6 @@ paths:
 ```text
 outputs/
 ├── matches/                       # copies des images correspondantes
-├── annotated/                     # images avec boîtes + score
-├── result_grid.png                # requête + résultats en grille
 └── report.json
 ```
 
@@ -173,15 +176,22 @@ outputs/
 
 ```json
 {
-  "query": "data/query/person.jpg",
+  "query": "data/input/query.jpg",
   "threshold": 0.40,
   "n_gallery_images": 30,
+  "n_matches": 2,
   "matches": [
-    {"image": "gallery/img_03.jpg", "score": 0.71},
-    {"image": "gallery/img_17.jpg", "score": 0.58}
+    {
+      "image": "data/gallery/img_03.jpg",
+      "score": 0.71,
+      "matched_face_index": 0
+    }
   ]
 }
 ```
+
+`annotated/` et `result_grid.png` relèvent de l'étape 9 (visualisation), pas de
+l'export minimal de l'étape 8.
 
 ## 6. Cas limites à gérer
 

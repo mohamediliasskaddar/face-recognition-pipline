@@ -266,6 +266,7 @@ def build_gallery_index(
     embedder: FaceEmbedder,
     *,
     cache_path: str | Path | None = None,
+    use_cache: bool = True,
 ) -> list[FaceRecord]:
     """Indexe tous les visages de la galerie ou réutilise un cache valide.
 
@@ -280,6 +281,7 @@ def build_gallery_index(
         embedder: Extracteur d'embeddings préparé et réutilisable.
         cache_path: Chemin de cache facultatif. Par défaut,
             `detector.config.paths.cache_dir/embeddings.npz`.
+        use_cache: Si `False`, reconstruit l'index sans lire ni écrire le cache.
 
     Returns:
         Un enregistrement par visage valide trouvé dans la galerie.
@@ -293,24 +295,29 @@ def build_gallery_index(
     """
     gallery_dir = Path(folder)
     image_paths = list_images(gallery_dir)
-    gallery_fingerprint = _hash_files(gallery_dir, image_paths)
-    configuration_fingerprint = _configuration_fingerprint(detector, embedder)
-    destination = (
-        Path(cache_path)
-        if cache_path is not None
-        else detector.config.paths.cache_dir / "embeddings.npz"
-    )
-
-    cached_records = load_cache(
-        destination,
-        gallery_fingerprint=gallery_fingerprint,
-        configuration_fingerprint=configuration_fingerprint,
-    )
-    if cached_records is not None:
-        logger.info(
-            "Cache de galerie rechargé : {} visages depuis '{}'.", len(cached_records), destination
+    destination: Path | None = None
+    gallery_fingerprint: str | None = None
+    configuration_fingerprint: str | None = None
+    if use_cache:
+        gallery_fingerprint = _hash_files(gallery_dir, image_paths)
+        configuration_fingerprint = _configuration_fingerprint(detector, embedder)
+        destination = (
+            Path(cache_path)
+            if cache_path is not None
+            else detector.config.paths.cache_dir / "embeddings.npz"
         )
-        return cached_records
+        cached_records = load_cache(
+            destination,
+            gallery_fingerprint=gallery_fingerprint,
+            configuration_fingerprint=configuration_fingerprint,
+        )
+        if cached_records is not None:
+            logger.info(
+                "Cache de galerie rechargé : {} visages depuis '{}'.",
+                len(cached_records),
+                destination,
+            )
+            return cached_records
 
     records: list[FaceRecord] = []
     for image_path in tqdm(image_paths, desc="Indexation de la galerie", unit="image"):
@@ -356,16 +363,25 @@ def build_gallery_index(
                 face.det_score,
             )
 
-    save_cache(
-        destination,
-        records,
-        gallery_fingerprint=gallery_fingerprint,
-        configuration_fingerprint=configuration_fingerprint,
-    )
-    logger.info(
-        "Index de galerie créé : {} visages issus de {} images; cache écrit dans '{}'.",
-        len(records),
-        len(image_paths),
-        destination,
-    )
+    if use_cache:
+        if destination is None or gallery_fingerprint is None or configuration_fingerprint is None:
+            raise RuntimeError("Les métadonnées de cache ne sont pas initialisées.")
+        save_cache(
+            destination,
+            records,
+            gallery_fingerprint=gallery_fingerprint,
+            configuration_fingerprint=configuration_fingerprint,
+        )
+        logger.info(
+            "Index de galerie créé : {} visages issus de {} images; cache écrit dans '{}'.",
+            len(records),
+            len(image_paths),
+            destination,
+        )
+    else:
+        logger.info(
+            "Index de galerie créé sans cache : {} visages issus de {} images.",
+            len(records),
+            len(image_paths),
+        )
     return records

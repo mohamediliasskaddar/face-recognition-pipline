@@ -150,6 +150,34 @@ def test_build_gallery_index_reuses_cache_without_reprocessing_images(
     assert embedder.embed_calls == 2
 
 
+def test_build_gallery_index_can_bypass_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L'option sans cache ne lit ni n'écrit de fichier de cache."""
+    gallery = tmp_path / "gallery"
+    gallery.mkdir()
+    write_marker_image(gallery / "one.png", 1)
+    cache_path = tmp_path / "cache" / "embeddings.npz"
+
+    def fail_cache_access(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Le cache ne doit pas être consulté avec use_cache=False.")
+
+    monkeypatch.setattr("src.gallery.load_cache", fail_cache_access)
+    monkeypatch.setattr("src.gallery.save_cache", fail_cache_access)
+
+    records = build_gallery_index(
+        gallery,
+        cast(FaceDetector, FakeDetector()),
+        FakeEmbedder(),
+        cache_path=cache_path,
+        use_cache=False,
+    )
+
+    assert len(records) == 2
+    assert not cache_path.exists()
+
+
 @pytest.mark.parametrize("change", ["contents", "file_list", "mtime"])
 def test_build_gallery_index_invalidates_cache_when_gallery_changes(
     tmp_path: Path,

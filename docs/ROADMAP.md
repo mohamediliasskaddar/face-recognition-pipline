@@ -14,7 +14,7 @@
 - [x] Étape 5 – Indexation de la galerie (+ cache)
 - [ ] Étape 6 – Comparaison et recherche
 - [ ] Étape 7 – Identification exhaustive (doublons d'identité)
-- [ ] Étape 8 – Pipeline bout en bout et CLI
+- [x] Étape 8 – Pipeline bout en bout et CLI
 - [ ] Étape 9 – Visualisation et export des résultats
 - [ ] Étape 10 – Évaluation et calibration du seuil
 - [ ] Étape 11 – Tests et robustesse
@@ -257,4 +257,3 @@ produit `outputs/matches/` et `report.json`.
 - Rapport + démonstration (CLI ou Streamlit)
 
 ---
-
