@@ -130,7 +130,13 @@ class MatchResult:
 ### `pipeline.py`
 - `run(query_path, gallery_dir, output_dir, cfg, *, face_index=None, use_cache=True) -> list[MatchResult]`.
 - Le pipeline partage une seule instance InsightFace entre détection et embedding, sélectionne le visage principal par défaut ou le visage zéro-based demandé, construit/recharge l'index galerie, appelle `resolve_identity`, copie les résultats dans `matches/` et écrit `report.json`.
+- Il exporte aussi les images annotées dans `annotated/`, la grille requête/résultats `result_grid.png` et la heatmap des embeddings de la galerie `similarity_heatmap.png`.
 - Un dossier de galerie sans image ou sans visage indexable et une requête sans visage sont des erreurs explicites. Une recherche sans correspondance est un résultat valide : `matches/` et un rapport avec une liste vide sont produits.
+
+### `visualization.py`
+- `draw_faces(img, records) -> np.ndarray` retourne une copie BGR annotée avec une boîte et un score de détection par visage.
+- `make_result_grid(query, matches, records, output_path)` enregistre la requête et les résultats annotés dans une grille PNG; la grille reste valide sans correspondance.
+- `plot_similarity_heatmap(records, output_path)` exporte la matrice cosinus visage×visage de la galerie.
 
 ### `evaluation.py`
 - `evaluate(results, labels_csv, query_person_id) -> dict` : P, R, F1.
@@ -169,6 +175,9 @@ paths:
 ```text
 outputs/
 ├── matches/                       # copies des images correspondantes
+├── annotated/                     # requête et résultats avec boîtes + scores
+├── result_grid.png                # requête + résultats en grille
+├── similarity_heatmap.png         # similarités cosinus galerie×galerie
 └── report.json
 ```
 
@@ -190,8 +199,8 @@ outputs/
 }
 ```
 
-`annotated/` et `result_grid.png` relèvent de l'étape 9 (visualisation), pas de
-l'export minimal de l'étape 8.
+`similarity_heatmap.png` compare les visages de l'index un à un; plusieurs visages
+d'une même image apparaissent donc sur des lignes et colonnes distinctes.
 
 ## 6. Cas limites à gérer
 

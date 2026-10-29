@@ -15,7 +15,7 @@
 - [ ] Étape 6 – Comparaison et recherche
 - [ ] Étape 7 – Identification exhaustive (doublons d'identité)
 - [x] Étape 8 – Pipeline bout en bout et CLI
-- [ ] Étape 9 – Visualisation et export des résultats
+- [x] Étape 9 – Visualisation et export des résultats
 - [ ] Étape 10 – Évaluation et calibration du seuil
 - [ ] Étape 11 – Tests et robustesse
 - [ ] Étape 12 – Interface Streamlit (bonus)

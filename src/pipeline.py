@@ -15,8 +15,9 @@ from src.detection import FaceDetector, select_main_face
 from src.embedding import InsightFaceEmbedder
 from src.gallery import build_gallery_index
 from src.identity import resolve_identity
-from src.io_utils import list_images, read_image
-from src.types import MatchResult
+from src.io_utils import list_images, read_image, save_image
+from src.types import FaceRecord, MatchResult
+from src.visualization import draw_faces, make_result_grid, plot_similarity_heatmap
 
 
 class PipelineError(RuntimeError):
@@ -73,6 +74,26 @@ def _copy_matches(matches: list[MatchResult], matches_dir: Path) -> None:
         if not source.is_file():
             raise PipelineError(f"L'image correspondante n'existe plus : '{source}'.")
         shutil.copy2(source, matches_dir / source.name)
+
+
+def _query_face_record(
+    query_path: Path,
+    face: object,
+    aligned_face: NDArray[np.uint8],
+    embedding: NDArray[np.float32],
+) -> FaceRecord:
+    """Construit l'enregistrement visuel du visage sélectionné dans la requête."""
+    bbox = tuple(round(float(coordinate)) for coordinate in face.bbox)
+    if len(bbox) != 4:
+        raise ValueError("La boîte du visage de requête doit contenir 4 coordonnées.")
+    return FaceRecord(
+        image_path=str(query_path),
+        bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
+        landmarks=np.asarray(face.kps, dtype=np.float32),
+        det_score=float(face.det_score),
+        aligned=aligned_face,
+        embedding=embedding,
+    )
 
 
 def run(
@@ -141,6 +162,7 @@ def run(
         query_face,
         aligned_face,
     )
+    query_record = _query_face_record(query, query_face, aligned_face, query_embedding)
 
     gallery_images = list_images(gallery)
     if not gallery_images:
@@ -159,6 +181,18 @@ def run(
     matches = resolve_identity(query_embedding, records, cfg)
     output_matches_dir = output / "matches"
     _copy_matches(matches, output_matches_dir)
+    annotated_dir = output / "annotated"
+    annotated_dir.mkdir(parents=True, exist_ok=True)
+    query_annotated = draw_faces(query_image, [query_record])
+    save_image(annotated_dir / f"query_{query.stem}.png", query_annotated)
+    records_by_image: dict[str, list[FaceRecord]] = {}
+    for record in records:
+        records_by_image.setdefault(record.image_path, []).append(record)
+    for match in matches:
+        source = Path(match.image_path)
+        annotated = draw_faces(read_image(source), records_by_image[match.image_path])
+        save_image(annotated_dir / source.name, annotated)
+
     _write_report(
         output / "report.json",
         query,
@@ -166,6 +200,13 @@ def run(
         len({record.image_path for record in records}),
         matches,
     )
+    make_result_grid(
+        query_annotated,
+        matches,
+        records,
+        output / "result_grid.png",
+    )
+    plot_similarity_heatmap(records, output / "similarity_heatmap.png")
     if matches:
         logger.info(
             "{} image(s) correspondante(s) exportée(s) dans '{}'.",

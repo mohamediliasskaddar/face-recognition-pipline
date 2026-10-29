@@ -45,7 +45,8 @@ photos, qui peuvent varier en éclairage, pose ou arrière-plan.
 | `src/matching.py` | Étape 6 implémentée | Calcule les similarités cosinus avec NumPy, retient le meilleur visage de chaque image et trie les résultats au-dessus du seuil. Tests synthétiques ajoutés; le top-10 réel reste à vérifier visuellement. |
 | `src/identity.py` | Code de l'étape 7 implémenté | Peut élargir la requête et ajouter les images de son cluster. Chaque stratégie est activable indépendamment; la comparaison précision/rappel reste à faire avec des identités annotées. |
 | `src/pipeline.py` et `src/main.py` | Étape 8 implémentée | Lancent la recherche depuis Python ou la CLI, gèrent le choix du visage, les erreurs et exportent `matches/` et `report.json`. Seul InsightFace est actuellement disponible. |
-| `src/visualization.py` et `src/evaluation.py` | À compléter | Aideront à examiner les résultats et mesurer précision/rappel. |
+| `src/visualization.py` | Étape 9 implémentée | Annote les visages, exporte la grille requête/résultats et la heatmap cosinus de la galerie. |
+| `src/evaluation.py` | À compléter | Mesurera précision/rappel et aidera à calibrer le seuil à partir des labels. |
 
 Les images de galerie et la photo requête ont été ajoutées aux données du projet.
 La création/validation de `labels.csv` et l'exploration visuelle dans le notebook
@@ -274,7 +275,26 @@ Options utiles :
 - `--backend insightface` est accepté; les autres valeurs sont refusées clairement
   car aucun autre backend n'est implémenté.
 
-L'export des images annotées et de la grille visuelle est prévu à l'étape 9.
+La visualisation est maintenant intégrée à la commande CLI et se fait à chaque
+recherche exécutée avec succès, y compris si aucun match n'est trouvé.
+
+## Lire les visualisations exportées
+
+Depuis la racine du dépôt, lance la commande CLI de l'étape précédente. En plus
+des copies dans `outputs/matches/` et du rapport JSON, elle crée :
+
+- `outputs/annotated/` : une version annotée de la requête et de chaque résultat,
+  avec une boîte verte et le score de détection du visage.
+- `outputs/result_grid.png` : une grille montrant la requête puis les résultats
+  ordonnés par score cosinus; même sans résultat, la requête reste affichée.
+- `outputs/similarity_heatmap.png` : une heatmap cosinus entre chaque paire de
+  visages indexés dans la galerie. Les couleurs représentent la similarité entre
+  `-1` et `1`; les axes indiquent le nom de fichier et le rang du visage dans
+  cette image.
+
+Les images s'ouvrent directement dans VS Code ou dans un visualiseur d'images.
+La grille et la heatmap sont enregistrées en PNG afin de fonctionner même quand
+Matplotlib utilise un backend non interactif.
 
 ## Suite des étapes
 
@@ -293,8 +313,10 @@ L'export des images annotées et de la grille visuelle est prévu à l'étape 9.
    synthétiques; mesurer leur effet sur le rappel et la précision avec les labels.
 7. **Pipeline** : CLI et orchestration implémentées; valider la commande réelle
    sur la requête et la galerie locales.
-8. **Visualisation et export avancé** : créer les annotations, la grille de
-   résultats et la heatmap.
+8. **Visualisation et export avancé** : annotations, grille et heatmap
+   implémentées et exportées par la CLI.
+9. **Évaluation** : comparer les résultats aux identités annotées et calibrer les
+   seuils.
 
 Les dépendances Python et critères de qualité sont décrits dans
 [docs/TECH_STACK.md](./TECH_STACK.md). La progression et les critères « Done »

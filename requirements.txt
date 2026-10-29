@@ -5,6 +5,7 @@ insightface>=0.7.3
 onnxruntime>=1.17
 scikit-learn>=1.4
 matplotlib>=3.8
+matplotlib>=3.8
 pyyaml>=6.0
 loguru>=0.7
 tqdm>=4.66

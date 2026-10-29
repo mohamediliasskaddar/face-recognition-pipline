@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar, cast
 
+import cv2
 import numpy as np
 import pytest
 
@@ -86,11 +87,11 @@ def pipeline_setup(
     gallery = tmp_path / "gallery"
     output = tmp_path / "output"
     gallery.mkdir()
-    query.write_bytes(b"query")
+    assert cv2.imwrite(str(query), np.zeros((32, 32, 3), dtype=np.uint8))
     first_image = gallery / "first.jpg"
     second_image = gallery / "second.jpg"
-    first_image.write_bytes(b"first")
-    second_image.write_bytes(b"second")
+    assert cv2.imwrite(str(first_image), np.full((32, 32, 3), 80, dtype=np.uint8))
+    assert cv2.imwrite(str(second_image), np.full((32, 32, 3), 160, dtype=np.uint8))
 
     config = load_config()
     FakeDetector.faces = [make_face([1.0, 0.0])]
@@ -127,7 +128,11 @@ def test_run_exports_matching_images_and_report(
     matches = run(query, gallery, output, config)
 
     assert matches == [MatchResult(str(gallery / "first.jpg"), 1.0, 0)]
-    assert (output / "matches" / "first.jpg").read_bytes() == b"first"
+    assert (output / "matches" / "first.jpg").read_bytes() == (gallery / "first.jpg").read_bytes()
+    assert (output / "annotated" / "first.jpg").is_file()
+    assert (output / "annotated" / "query_query.png").is_file()
+    assert (output / "result_grid.png").is_file()
+    assert (output / "similarity_heatmap.png").is_file()
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["query"] == str(query)
     assert report["threshold"] == config.matching.threshold
@@ -199,6 +204,9 @@ def test_run_exports_report_when_no_image_matches(
 
     assert run(query, gallery, output, config) == []
     assert (output / "matches").is_dir()
+    assert not list((output / "matches").iterdir())
+    assert (output / "result_grid.png").is_file()
+    assert (output / "similarity_heatmap.png").is_file()
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert report["n_matches"] == 0
     assert report["matches"] == []
