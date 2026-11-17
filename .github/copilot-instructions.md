@@ -1,6 +1,13 @@
 # Instructions pour GitHub Copilot
 
-## Contexte du projet
+## Sujet actuel : G2 (tri des visages par personne)
+- Le projet lit un dossier, détecte et recadre les visages, puis les regroupe par personne dans des sous-dossiers (clustering non supervisé). Suivre docs/REFACTOR_G2.md.
+- L'unité de travail est le **visage**, pas l'image : une image avec plusieurs visages alimente plusieurs dossiers.
+- Le nombre de personnes est inconnu : ne pas utiliser KMeans ; utiliser AgglomerativeClustering (cosinus, distance_threshold) ou DBSCAN.
+- Les visages de mauvaise qualité sont exclus du clustering puis rattachés au centroïde le plus proche, sinon placés dans unknown/.
+- L'ancien mode de recherche par requête reste disponible via --mode search.
+
+## Contexte du projet (ancienne approche)
 Pipeline Python de **détection et reconnaissance faciale multi-instances** (module Computer Vision) : à partir d'une image requête, retrouver toutes les images d'une galerie locale (~30 images) contenant la même personne.
 
 Documents de référence (à lire avant toute modification) :
