@@ -1,5 +1,6 @@
 """Tests des artefacts ZIP produits par l'interface Streamlit."""
 
+import json
 import subprocess
 import sys
 from io import BytesIO
@@ -47,6 +48,28 @@ def test_build_results_archive_rejects_missing_pipeline_output(tmp_path: Path) -
         streamlit_app.build_results_archive(tmp_path)
 
 
+def test_build_cluster_archive_includes_crops_contact_sheets_and_report(
+    tmp_path: Path,
+) -> None:
+    """L'archive de tri contient les crops, les planches et le rapport."""
+    files = {
+        "person_01/face0.jpg": b"crop",
+        "unknown/face1.jpg": b"unknown",
+        "contact_sheets/person_01.png": b"sheet",
+        "report.json": b'{"n_faces": 2}',
+    }
+    for relative_path, content in files.items():
+        file_path = tmp_path / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(content)
+
+    archive_bytes = streamlit_app.build_cluster_archive(tmp_path)
+
+    with ZipFile(BytesIO(archive_bytes)) as archive:
+        assert set(archive.namelist()) == set(files)
+        assert {name: archive.read(name) for name in archive.namelist()} == files
+
+
 def test_image_validation_accepts_real_fixture_and_rejects_corrupt_bytes() -> None:
     """L'aperçu accepte une image décodable et refuse les données non-image."""
     fixture_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
@@ -54,6 +77,137 @@ def test_image_validation_accepts_real_fixture_and_rejects_corrupt_bytes() -> No
     assert streamlit_app._is_valid_image(fixture_path.read_bytes())
     assert not streamlit_app._is_valid_image(b"this is not an image")
     assert not streamlit_app._is_valid_image(b"")
+
+
+def test_write_uploaded_gallery_preserves_nested_paths(tmp_path: Path) -> None:
+    """Les sous-dossiers importés sont conservés sans sortir de la galerie temporaire."""
+    image_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
+    gallery = tmp_path / "gallery"
+
+    count = streamlit_app._write_uploaded_gallery(
+        [("folder/landscape.png", image_path.read_bytes())],
+        gallery,
+    )
+
+    assert count == 1
+    assert (gallery / "folder" / "landscape.png").read_bytes() == image_path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("name", "contents", "message"),
+    [
+        ("../outside.png", b"image", "Chemin de fichier"),
+        ("sub/../outside.png", b"image", "Chemin de fichier"),
+        ("image.txt", b"image", "Format d'image"),
+        ("corrupt.png", b"not an image", "Image vide"),
+    ],
+)
+def test_write_uploaded_gallery_rejects_invalid_files(
+    tmp_path: Path,
+    name: str,
+    contents: bytes,
+    message: str,
+) -> None:
+    """Les chemins dangereux, formats inconnus et octets corrompus sont refusés."""
+    with pytest.raises(ValueError, match=message):
+        streamlit_app._write_uploaded_gallery([(name, contents)], tmp_path / "gallery")
+
+
+def test_write_uploaded_gallery_rejects_duplicate_paths(tmp_path: Path) -> None:
+    """Deux fichiers ne peuvent pas écraser le même chemin importé."""
+    image_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
+    contents = image_path.read_bytes()
+
+    with pytest.raises(ValueError, match="même chemin"):
+        streamlit_app._write_uploaded_gallery(
+            [("same.png", contents), ("same.png", contents)],
+            tmp_path / "gallery",
+        )
+
+
+def test_run_cluster_processes_uploaded_directory_and_sanitizes_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le helper transmet les réglages et retourne les visuels sans chemins temporaires."""
+    image_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
+    uploaded_bytes = image_path.read_bytes()
+    calls: dict[str, object] = {}
+
+    def fake_run_cluster(
+        gallery_dir: Path,
+        output_dir: Path,
+        config: AppConfig,
+        *,
+        use_cache: bool,
+    ) -> np.ndarray:
+        calls.update(
+            files=[path.relative_to(gallery_dir).as_posix() for path in gallery_dir.rglob("*")],
+            distance_threshold=config.clustering.distance_threshold,
+            min_face_size=config.quality.min_face_size,
+            margin=config.output.crop_margin,
+            copy_originals=config.output.copy_originals,
+            overwrite=config.output.overwrite,
+            use_cache=use_cache,
+        )
+        person_dir = output_dir / "person_01"
+        contact_dir = output_dir / "contact_sheets"
+        person_dir.mkdir(parents=True)
+        contact_dir.mkdir()
+        (person_dir / "landscape_face0.jpg").write_bytes(b"crop")
+        (contact_dir / "person_01.png").write_bytes(b"sheet")
+        report = {
+            "n_persons": 1,
+            "n_faces": 1,
+            "folders": {
+                "person_01": {
+                    "label": 0,
+                    "face_count": 1,
+                    "crops": [
+                        {
+                            "filename": "landscape_face0.jpg",
+                            "source_image": str(gallery_dir / "nested" / "landscape.png"),
+                            "face_index": 0,
+                        }
+                    ],
+                    "originals": [],
+                },
+                "unknown": {
+                    "label": -1,
+                    "face_count": 0,
+                    "crops": [],
+                    "originals": [],
+                },
+            },
+        }
+        (output_dir / "report.json").write_text(
+            json.dumps(report),
+            encoding="utf-8",
+        )
+        return np.asarray([0], dtype=np.int32)
+
+    monkeypatch.setattr(streamlit_app, "run_cluster", fake_run_cluster)
+    report, contact_sheets, archive = streamlit_app._run_cluster(
+        [("nested/landscape.png", uploaded_bytes)],
+        load_config(),
+        0.45,
+        60,
+        0.3,
+    )
+
+    assert set(calls["files"]) == {"nested", "nested/landscape.png"}
+    assert calls["distance_threshold"] == 0.45
+    assert calls["min_face_size"] == 60
+    assert calls["margin"] == pytest.approx(0.3)
+    assert calls["copy_originals"] is False
+    assert calls["overwrite"] is True
+    assert calls["use_cache"] is False
+    assert report["folders"]["person_01"]["crops"][0]["source_image"] == "nested/landscape.png"
+    assert contact_sheets == {"person_01": b"sheet"}
+    with ZipFile(BytesIO(archive)) as zip_file:
+        assert "person_01/landscape_face0.jpg" in zip_file.namelist()
+        assert "contact_sheets/person_01.png" in zip_file.namelist()
+        assert "report.json" in zip_file.namelist()
 
 
 def test_run_search_calls_pipeline_and_packages_its_outputs(
@@ -124,21 +278,46 @@ def test_run_search_calls_pipeline_and_packages_its_outputs(
         assert "result_grid.png" in archive.namelist()
 
 
-def test_streamlit_page_renders_without_runtime_errors(
-    monkeypatch: pytest.MonkeyPatch,
+def test_streamlit_dashboard_renders_both_modes_and_requires_upload(
     tmp_path: Path,
 ) -> None:
-    """La page se lance et expose les contrôles principaux dans Streamlit."""
-    from streamlit.testing.v1 import AppTest
-
+    """Les deux modes s'affichent et le clustering exige un dossier importé."""
     app_path = Path(__file__).parents[1] / "app" / "streamlit_app.py"
-    monkeypatch.chdir(tmp_path)
-    app = AppTest.from_file(str(app_path), default_timeout=30).run()
+    script = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from streamlit.testing.v1 import AppTest\n"
+        "app = AppTest.from_file(sys.argv[1], default_timeout=30).run()\n"
+        "assert not app.exception\n"
+        "assert [item.value for item in app.title] == ['Tri et recherche de visages']\n"
+        "assert [item.value for item in app.header] == ['Tri des visages par personne']\n"
+        "assert [item.label for item in app.slider] == [\n"
+        "    'Distance cosinus', 'Taille minimale du visage (pixels)', 'Marge autour des crops'\n"
+        "]\n"
+        "assert app.get('file_uploader')[0].label == 'Dossier d’images à classer'\n"
+        "app.button[0].click().run()\n"
+        "assert not app.exception\n"
+        "assert [item.value for item in app.error] == [\n"
+        "    'Importez un dossier contenant au moins une image.'\n"
+        "]\n"
+        "app.radio[0].set_value('Recherche historique').run()\n"
+        "assert not app.exception\n"
+        "assert [item.value for item in app.header] == [\n"
+        "    'Recherche faciale dans une galerie locale'\n"
+        "]\n"
+        "assert [item.label for item in app.slider] == ['Seuil de similarité cosinus']\n"
+    )
 
-    assert not app.exception
-    assert [element.value for element in app.title] == ["Recherche faciale dans une galerie locale"]
-    assert [element.label for element in app.slider] == ["Seuil de similarité cosinus"]
-    assert len(app.get("file_uploader")) == 1
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(app_path)],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_streamlit_script_imports_when_started_outside_project_root(

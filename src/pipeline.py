@@ -10,14 +10,21 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from src.clustering import cluster_face_records
 from src.config import AppConfig
 from src.detection import FaceDetector, select_main_face
 from src.embedding import InsightFaceEmbedder
 from src.gallery import build_gallery_index
 from src.identity import resolve_identity
 from src.io_utils import list_images, read_image, save_image
+from src.organizer import organize
 from src.types import FaceRecord, MatchResult
-from src.visualization import draw_faces, make_result_grid, plot_similarity_heatmap
+from src.visualization import (
+    draw_faces,
+    make_contact_sheets,
+    make_result_grid,
+    plot_similarity_heatmap,
+)
 
 
 class PipelineError(RuntimeError):
@@ -216,3 +223,69 @@ def run(
             output / "report.json",
         )
     return matches
+
+
+def run_cluster(
+    input_dir: str | Path,
+    output_dir: str | Path,
+    cfg: AppConfig,
+    *,
+    use_cache: bool = True,
+) -> NDArray[np.int32]:
+    """Détecte, clusterise et exporte tous les visages d'un dossier.
+
+    Args:
+        input_dir: Dossier contenant les images à organiser.
+        output_dir: Dossier racine de l'arborescence générée.
+        cfg: Configuration de détection, qualité, clustering et export.
+        use_cache: Si `False`, reconstruit l'index sans cache.
+
+    Returns:
+        Un label par visage indexé, dans le même ordre que les enregistrements.
+        Le label `-1` désigne un visage inconnu.
+
+    Raises:
+        PipelineError: Si le backend n'est pas disponible ou si le dossier ne
+            contient aucune image.
+        OSError, ValueError, RuntimeError: Si l'indexation ou l'export échoue.
+    """
+    if cfg.model.backend != "insightface":
+        raise PipelineError(
+            f"Le backend '{cfg.model.backend}' n'est pas implémenté; "
+            "le backend disponible est 'insightface'."
+        )
+
+    input_path = Path(input_dir)
+    image_paths = list_images(input_path, recursive=True)
+    if not image_paths:
+        raise PipelineError(f"Aucune image trouvée dans le dossier '{input_path}'.")
+
+    embedder = InsightFaceEmbedder(cfg)
+    detector = FaceDetector(cfg, analysis=embedder.analysis)
+    records = build_gallery_index(
+        input_path,
+        detector,
+        embedder,
+        use_cache=use_cache,
+        recursive=True,
+    )
+    labels = cluster_face_records(records, cfg)
+    report_path = organize(
+        records,
+        labels,
+        output_dir,
+        cfg.output.copy_originals,
+        margin=cfg.output.crop_margin,
+        overwrite=cfg.output.overwrite,
+    )
+    make_contact_sheets(report_path, report_path.parent / "contact_sheets")
+
+    person_count = len({int(label) for label in labels if label >= 0})
+    unknown_count = int(np.count_nonzero(labels == -1))
+    logger.success(
+        "Clustering terminé : {} personne(s), {} visage(s) inconnu(s). Rapport : '{}'.",
+        person_count,
+        unknown_count,
+        report_path,
+    )
+    return labels

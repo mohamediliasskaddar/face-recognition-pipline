@@ -1,13 +1,15 @@
 """Tests d'extraction et de normalisation des embeddings."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 import src.embedding as embedding_module
-from src.config import AppConfig, ModelConfig, load_config
+from src.config import AppConfig, EmbeddingConfig, ModelConfig, load_config
 from src.detection import DetectedFace, FaceAnalysisBackend, FaceDetector, RecognitionModel
 from src.embedding import EMBEDDING_DIMENSION, FaceEmbedder, InsightFaceEmbedder
 
@@ -23,6 +25,18 @@ class FakeRecognitionModel:
         """Retourne la sortie configurée pour ce test."""
         self.inputs.append(imgs)
         return self.output
+
+
+class SequenceRecognitionModel(FakeRecognitionModel):
+    """Faux ArcFace qui retourne une sortie différente pour chaque vue."""
+
+    def __init__(self, outputs: list[NDArray[np.float32]]) -> None:
+        super().__init__(outputs[0])
+        self.outputs = outputs
+
+    def get_feat(self, imgs: NDArray[np.uint8]) -> NDArray[np.float32]:
+        self.inputs.append(imgs)
+        return self.outputs[len(self.inputs) - 1]
 
 
 class FakeFaceAnalysis:
@@ -47,13 +61,20 @@ def make_config() -> AppConfig:
 def make_embedder(
     monkeypatch: pytest.MonkeyPatch,
     output: NDArray[np.float32],
+    config: AppConfig | None = None,
 ) -> tuple[InsightFaceEmbedder, FakeRecognitionModel]:
     """Construit l'embedder avec un modèle ArcFace simulé."""
     recognition_model = FakeRecognitionModel(output)
     analysis = FakeFaceAnalysis(recognition_model)
     monkeypatch.setattr(embedding_module, "_create_analysis", lambda _: analysis)
+    active_config = config
+    if active_config is None:
+        active_config = replace(
+            make_config(),
+            embedding=EmbeddingConfig(use_flip=False, use_clahe=False),
+        )
 
-    return InsightFaceEmbedder(make_config()), recognition_model
+    return InsightFaceEmbedder(active_config), recognition_model
 
 
 def test_insightface_embedder_returns_normalized_float32_embedding(
@@ -92,6 +113,66 @@ def test_insightface_embedder_reuses_embedding_from_detected_face(
         atol=1e-6,
     )
     assert recognition_model.inputs == []
+
+
+def test_flip_embedding_averages_and_normalizes_both_views(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le flip horizontal produit deux embeddings dont la moyenne est renormalisée."""
+    first_embedding = np.zeros(EMBEDDING_DIMENSION, dtype=np.float32)
+    first_embedding[0] = 3.0
+    second_embedding = np.zeros(EMBEDDING_DIMENSION, dtype=np.float32)
+    second_embedding[1] = 4.0
+    recognition_model = SequenceRecognitionModel([first_embedding, second_embedding])
+    analysis = FakeFaceAnalysis(recognition_model)
+    embedder = InsightFaceEmbedder(make_config(), analysis=analysis)
+    aligned_face = np.arange(112 * 112 * 3, dtype=np.uint8).reshape(112, 112, 3)
+
+    embedding = embedder.embed(aligned_face)
+
+    assert len(recognition_model.inputs) == 2
+    np.testing.assert_array_equal(recognition_model.inputs[0], aligned_face)
+    np.testing.assert_array_equal(recognition_model.inputs[1], cv2.flip(aligned_face, 1))
+    np.testing.assert_allclose(embedding[:2], [2**-0.5, 2**-0.5], atol=1e-6)
+    assert np.linalg.norm(embedding) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_detected_face_embedding_is_recomputed_when_flip_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L'option flip empêche de réutiliser l'embedding non augmenté du détecteur."""
+    embedder, recognition_model = make_embedder(
+        monkeypatch,
+        np.ones((1, EMBEDDING_DIMENSION), dtype=np.float32),
+        config=make_config(),
+    )
+    face = SimpleNamespace(normed_embedding=np.ones(EMBEDDING_DIMENSION, dtype=np.float32))
+
+    embedder.embed_detected_face(face, np.zeros((112, 112, 3), dtype=np.uint8))
+
+    assert len(recognition_model.inputs) == 2
+
+
+def test_clahe_preprocesses_the_face_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLAHE modifie le crop BGR avant son passage au modèle."""
+    config = replace(
+        make_config(),
+        embedding=EmbeddingConfig(use_flip=False, use_clahe=True),
+    )
+    embedder, recognition_model = make_embedder(
+        monkeypatch,
+        np.ones((1, EMBEDDING_DIMENSION), dtype=np.float32),
+        config=config,
+    )
+    aligned_face = np.arange(112 * 112 * 3, dtype=np.uint8).reshape(112, 112, 3)
+
+    embedder.embed(aligned_face)
+
+    assert len(recognition_model.inputs) == 1
+    assert recognition_model.inputs[0].shape == aligned_face.shape
+    assert not np.array_equal(recognition_model.inputs[0], aligned_face)
 
 
 def test_face_embedder_is_an_abstract_interface() -> None:

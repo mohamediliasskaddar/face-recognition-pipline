@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 
@@ -56,6 +57,8 @@ class InsightFaceEmbedder(FaceEmbedder):
                 ArcFace utilisable.
         """
         self._config = config if config is not None else load_config()
+        self._use_flip = self._config.embedding.use_flip
+        self._use_clahe = self._config.embedding.use_clahe
         self._analysis = analysis if analysis is not None else _create_analysis(self._config.model)
         recognition_model = self._analysis.models.get("recognition")
         if recognition_model is None or not callable(getattr(recognition_model, "get_feat", None)):
@@ -96,6 +99,27 @@ class InsightFaceEmbedder(FaceEmbedder):
                 f"{ALIGNED_FACE_SHAPE}, forme reçue : {aligned_face.shape}."
             )
 
+        processed_face = self._preprocess(aligned_face)
+        embedding = self._embed_once(processed_face)
+        if not self._use_flip:
+            return embedding
+
+        flipped_embedding = self._embed_once(cv2.flip(processed_face, 1))
+        return self._normalize_embedding(embedding + flipped_embedding)
+
+    def _preprocess(self, aligned_face: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Applique les transformations configurées avant l'inférence."""
+        if not self._use_clahe:
+            return aligned_face
+
+        lab_face = cv2.cvtColor(aligned_face, cv2.COLOR_BGR2LAB)
+        lightness, green_red, blue_yellow = cv2.split(lab_face)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced_lab = cv2.merge((clahe.apply(lightness), green_red, blue_yellow))
+        return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+
+    def _embed_once(self, aligned_face: NDArray[np.uint8]) -> NDArray[np.float32]:
+        """Extrait et normalise un embedding pour une seule vue du visage."""
         raw_embedding = np.asarray(self._recognition_model.get_feat(aligned_face))
         if raw_embedding.shape == (1, EMBEDDING_DIMENSION):
             raw_embedding = raw_embedding[0]
@@ -112,9 +136,9 @@ class InsightFaceEmbedder(FaceEmbedder):
         face: DetectedFace,
         aligned_face: NDArray[np.uint8],
     ) -> NDArray[np.float32]:
-        """Réutilise l'embedding calculé par FaceAnalysis, sans inférence ArcFace en double."""
+        """Réutilise la sortie de détection si aucun prétraitement n'est activé."""
         normed_embedding = getattr(face, "normed_embedding", None)
-        if normed_embedding is None:
+        if normed_embedding is None or self._use_flip or self._use_clahe:
             return self.embed(aligned_face)
         return self._normalize_embedding(np.asarray(normed_embedding))
 

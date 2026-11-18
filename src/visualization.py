@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -184,3 +186,87 @@ def plot_similarity_heatmap(
         figure.savefig(destination, dpi=150, bbox_inches="tight")
     finally:
         plt.close(figure)
+
+
+def make_contact_sheets(
+    report_path: str | Path,
+    output_dir: str | Path,
+    *,
+    columns: int = 5,
+) -> list[Path]:
+    """Crée une planche de contact par dossier contenant des crops exportés.
+
+    Args:
+        report_path: Rapport `report.json` produit par l'organiseur.
+        output_dir: Dossier où enregistrer les planches PNG.
+        columns: Nombre de crops par rangée.
+
+    Returns:
+        Chemins des planches générées, dans l'ordre des dossiers du rapport.
+
+    Raises:
+        ValueError: Si le rapport, ses noms ou le nombre de colonnes sont invalides.
+        OSError: Si un crop ne peut pas être lu ou une planche enregistrée.
+    """
+    if columns < 1:
+        raise ValueError("columns doit être un entier positif.")
+
+    report_file = Path(report_path)
+    report = json.loads(report_file.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not isinstance(report.get("folders"), dict):
+        raise TypeError("Le rapport doit contenir un dictionnaire 'folders'.")
+
+    destination_dir = Path(output_dir)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    generated_paths: list[Path] = []
+    for folder_name, folder_data in report["folders"].items():
+        if (
+            not isinstance(folder_name, str)
+            or Path(folder_name).name != folder_name
+            or not isinstance(folder_data, dict)
+            or not isinstance(folder_data.get("crops"), list)
+        ):
+            raise ValueError("Le rapport contient un dossier ou une liste de crops invalide.")
+        crop_entries = folder_data["crops"]
+        if not crop_entries:
+            continue
+
+        crops: list[tuple[NDArray[np.uint8], str]] = []
+        for entry in crop_entries:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("filename"), str)
+                or Path(entry["filename"]).name != entry["filename"]
+                or not isinstance(entry.get("source_image"), str)
+            ):
+                raise ValueError("Le rapport contient une entrée de crop invalide.")
+            image = read_image(report_file.parent / folder_name / entry["filename"])
+            title = Path(entry["source_image"]).name
+            face_index = entry.get("face_index")
+            if isinstance(face_index, int):
+                title = f"{title} #{face_index}"
+            crops.append((image, title))
+
+        rows = math.ceil(len(crops) / columns)
+        figure, axes = plt.subplots(
+            rows,
+            columns,
+            figsize=(3 * columns, 3.2 * rows),
+            squeeze=False,
+        )
+        for axis, (crop, title) in zip(axes.ravel(), crops, strict=False):
+            axis.imshow(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+            axis.set_title(title, fontsize=8)
+            axis.axis("off")
+        for axis in axes.ravel()[len(crops) :]:
+            axis.axis("off")
+
+        figure.tight_layout()
+        output_path = destination_dir / f"{folder_name}.png"
+        try:
+            figure.savefig(output_path, dpi=150, bbox_inches="tight")
+        finally:
+            plt.close(figure)
+        generated_paths.append(output_path)
+
+    return generated_paths

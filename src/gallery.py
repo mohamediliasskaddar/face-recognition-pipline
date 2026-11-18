@@ -63,6 +63,8 @@ def _configuration_fingerprint(detector: FaceDetector, embedder: FaceEmbedder) -
             "backend": embedder_config.model.backend,
             "name": embedder_config.model.name,
             "embedder_class": (f"{type(embedder).__module__}.{type(embedder).__qualname__}"),
+            "use_flip": embedder_config.embedding.use_flip,
+            "use_clahe": embedder_config.embedding.use_clahe,
         },
     }
     encoded_payload = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -267,6 +269,7 @@ def build_gallery_index(
     *,
     cache_path: str | Path | None = None,
     use_cache: bool = True,
+    recursive: bool = False,
 ) -> list[FaceRecord]:
     """Indexe tous les visages de la galerie ou réutilise un cache valide.
 
@@ -282,6 +285,7 @@ def build_gallery_index(
         cache_path: Chemin de cache facultatif. Par défaut,
             `detector.config.paths.cache_dir/embeddings.npz`.
         use_cache: Si `False`, reconstruit l'index sans lire ni écrire le cache.
+        recursive: Si `True`, inclut également les images des sous-dossiers.
 
     Returns:
         Un enregistrement par visage valide trouvé dans la galerie.
@@ -294,7 +298,7 @@ def build_gallery_index(
         ValueError: Si le modèle retourne des données de visage invalides.
     """
     gallery_dir = Path(folder)
-    image_paths = list_images(gallery_dir)
+    image_paths = list_images(gallery_dir, recursive=recursive)
     destination: Path | None = None
     gallery_fingerprint: str | None = None
     configuration_fingerprint: str | None = None

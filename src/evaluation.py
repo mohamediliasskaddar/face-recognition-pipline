@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
-from sklearn.metrics import roc_curve
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, roc_curve
 
+from src.clustering import cluster_face_records
+from src.config import AppConfig
 from src.matching import cosine_similarity_matrix, match_images
 from src.types import FaceRecord, MatchResult
 
 DEFAULT_THRESHOLDS = np.linspace(0.2, 0.7, 51, dtype=np.float64)
+DEFAULT_CLUSTERING_THRESHOLDS = np.linspace(0.4, 0.8, 9, dtype=np.float64)
 
 
 def load_labels(labels_csv: str | Path) -> dict[str, frozenset[str]]:
@@ -57,6 +62,217 @@ def load_labels(labels_csv: str | Path) -> dict[str, frozenset[str]]:
     if not labels:
         raise ValueError(f"Aucune annotation trouvée dans '{labels_csv}'.")
     return {filename: frozenset(person_ids) for filename, person_ids in labels.items()}
+
+
+def load_face_labels(labels_csv: str | Path) -> dict[tuple[str, int], str]:
+    """Charge une identité par visage depuis un CSV à deux ou trois colonnes.
+
+    Le format `filename,person_id` historique est interprété comme un visage
+    d'index `0` par image. Le format G2 utilise `filename,face_index,person_id`.
+    """
+    labels: dict[tuple[str, int], str] = {}
+    with Path(labels_csv).open(newline="", encoding="utf-8-sig") as csv_file:
+        reader = csv.DictReader(csv_file)
+        if reader.fieldnames is None or not {"filename", "person_id"}.issubset(reader.fieldnames):
+            raise ValueError("Le CSV doit contenir les colonnes 'filename' et 'person_id'.")
+        has_face_index = "face_index" in reader.fieldnames
+
+        for row_number, row in enumerate(reader, start=2):
+            filename = (row.get("filename") or "").strip()
+            person_id = (row.get("person_id") or "").strip()
+            if not filename or not person_id:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : filename et person_id doivent être renseignés."
+                )
+            if Path(filename).name != filename:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : filename doit être un nom de fichier, "
+                    "pas un chemin."
+                )
+            if ";" in person_id:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : un visage doit avoir un seul person_id."
+                )
+
+            face_index_text = (row.get("face_index") or "").strip() if has_face_index else "0"
+            try:
+                face_index = int(face_index_text)
+            except ValueError as error:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : face_index doit être un entier."
+                ) from error
+            if face_index < 0:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : face_index ne peut pas être négatif."
+                )
+
+            face_key = (filename, face_index)
+            previous_person_id = labels.get(face_key)
+            if previous_person_id is not None and previous_person_id != person_id:
+                raise ValueError(
+                    f"Ligne {row_number} du CSV : plusieurs person_id pour "
+                    f"{filename} visage {face_index}."
+                )
+            labels[face_key] = person_id
+
+    if not labels:
+        raise ValueError(f"Aucune annotation de visage trouvée dans '{labels_csv}'.")
+    return labels
+
+
+def _record_face_keys(records: Sequence[FaceRecord]) -> list[tuple[str, int]]:
+    """Associe un index zéro-based à chaque visage dans son image source."""
+    face_indices: dict[str, int] = {}
+    source_paths: dict[str, Path] = {}
+    keys: list[tuple[str, int]] = []
+    for record in records:
+        filename = Path(record.image_path).name
+        resolved_path = Path(record.image_path).resolve()
+        previous_path = source_paths.get(filename)
+        if previous_path is not None and previous_path != resolved_path:
+            raise ValueError(f"Plusieurs images source portent le même nom '{filename}'.")
+        source_paths[filename] = resolved_path
+        face_index = face_indices.get(filename, 0)
+        face_indices[filename] = face_index + 1
+        keys.append((filename, face_index))
+    return keys
+
+
+def evaluate_clustering(
+    records: Sequence[FaceRecord],
+    predicted_labels: Sequence[int] | NDArray[np.generic],
+    labels_csv: str | Path,
+) -> dict[str, float | int]:
+    """Calcule pureté, ARI, NMI et métriques B-cubed sur des labels par visage."""
+    label_array = np.asarray(predicted_labels)
+    if (
+        label_array.shape != (len(records),)
+        or label_array.dtype.kind not in {"i", "u"}
+        or (label_array.dtype.kind == "u" and np.any(label_array > np.iinfo(np.int32).max))
+    ):
+        raise ValueError("predicted_labels doit contenir un entier par visage.")
+    label_array = np.asarray(label_array, dtype=np.int64)
+    if np.any(label_array < -1):
+        raise ValueError("Le label -1 est la seule valeur négative autorisée.")
+
+    ground_truth = load_face_labels(labels_csv)
+    face_keys = _record_face_keys(records)
+    labeled_indices = [index for index, key in enumerate(face_keys) if key in ground_truth]
+    missing_keys = set(ground_truth).difference(face_keys)
+    if not labeled_indices:
+        raise ValueError("Aucun visage indexé ne possède de label dans le CSV.")
+
+    truth = [ground_truth[face_keys[index]] for index in labeled_indices]
+    predictions = [int(label_array[index]) for index in labeled_indices]
+    cluster_sizes: Counter[int] = Counter(predictions)
+    class_sizes: Counter[str] = Counter(truth)
+    cluster_class_counts: dict[int, Counter[str]] = defaultdict(Counter)
+    for predicted, expected in zip(predictions, truth, strict=True):
+        cluster_class_counts[predicted][expected] += 1
+
+    purity = sum(max(counts.values()) for counts in cluster_class_counts.values()) / len(truth)
+    bcubed_precision = float(
+        np.mean(
+            [
+                cluster_class_counts[predicted][expected] / cluster_sizes[predicted]
+                for predicted, expected in zip(predictions, truth, strict=True)
+            ]
+        )
+    )
+    bcubed_recall = float(
+        np.mean(
+            [
+                cluster_class_counts[predicted][expected] / class_sizes[expected]
+                for predicted, expected in zip(predictions, truth, strict=True)
+            ]
+        )
+    )
+    bcubed_f1 = (
+        2.0 * bcubed_precision * bcubed_recall / (bcubed_precision + bcubed_recall)
+        if bcubed_precision + bcubed_recall
+        else 0.0
+    )
+
+    return {
+        "purity": float(purity),
+        "ari": float(adjusted_rand_score(truth, predictions)),
+        "nmi": float(normalized_mutual_info_score(truth, predictions)),
+        "bcubed_precision": bcubed_precision,
+        "bcubed_recall": bcubed_recall,
+        "bcubed_f1": bcubed_f1,
+        "n_detected_people": len({label for label in predictions if label >= 0}),
+        "n_real_people": len(set(truth)),
+        "n_evaluated_faces": len(truth),
+        "n_unknown_faces": sum(label == -1 for label in predictions),
+        "n_missing_label_faces": len(missing_keys),
+    }
+
+
+def sweep_clustering_threshold(
+    records: Sequence[FaceRecord],
+    labels_csv: str | Path,
+    cfg: AppConfig,
+    thresholds: Sequence[float] | NDArray[np.floating] | None = None,
+) -> list[dict[str, float | int]]:
+    """Balaye le seuil de distance et calcule les métriques de clustering."""
+    threshold_values = np.asarray(
+        DEFAULT_CLUSTERING_THRESHOLDS if thresholds is None else thresholds,
+        dtype=np.float64,
+    )
+    if (
+        threshold_values.ndim != 1
+        or threshold_values.size == 0
+        or not np.isfinite(threshold_values).all()
+        or np.any((threshold_values < 0.0) | (threshold_values > 2.0))
+    ):
+        raise ValueError("Les seuils clustering doivent être finis et compris entre 0 et 2.")
+
+    curve: list[dict[str, float | int]] = []
+    for threshold in threshold_values:
+        labels = cluster_face_records(records, cfg, distance_threshold=float(threshold))
+        metrics = evaluate_clustering(records, labels, labels_csv)
+        curve.append({"distance_threshold": float(threshold), **metrics})
+    return curve
+
+
+def plot_clustering_threshold_sweep(
+    results: Sequence[dict[str, float | int]],
+    output_path: str | Path,
+) -> None:
+    """Trace ARI et B-cubed F1 en fonction du seuil de distance."""
+    if not results:
+        raise ValueError("Au moins un résultat de balayage est nécessaire.")
+    try:
+        thresholds = np.asarray([row["distance_threshold"] for row in results], dtype=np.float64)
+        ari_values = np.asarray([row["ari"] for row in results], dtype=np.float64)
+        bcubed_values = np.asarray([row["bcubed_f1"] for row in results], dtype=np.float64)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "Chaque résultat doit contenir distance_threshold, ari et bcubed_f1."
+        ) from error
+    if (
+        not np.isfinite(thresholds).all()
+        or not np.isfinite(ari_values).all()
+        or not np.isfinite(bcubed_values).all()
+    ):
+        raise ValueError("Les métriques du balayage doivent être finies.")
+
+    figure, axis = plt.subplots(figsize=(8, 5))
+    axis.plot(thresholds, ari_values, marker="o", label="ARI")
+    axis.plot(thresholds, bcubed_values, marker="s", label="B-cubed F1")
+    axis.set_xlabel("Distance threshold (cosinus)")
+    axis.set_ylabel("Score")
+    axis.set_ylim(0.0, 1.05)
+    axis.set_title("Qualité du clustering selon le seuil")
+    axis.grid(True, alpha=0.3)
+    axis.legend()
+    figure.tight_layout()
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        figure.savefig(destination, dpi=150, bbox_inches="tight")
+    finally:
+        plt.close(figure)
 
 
 def _metrics(

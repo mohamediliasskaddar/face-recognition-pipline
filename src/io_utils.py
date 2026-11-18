@@ -18,15 +18,16 @@ class ImageWriteError(OSError):
     """Erreur levée lorsqu'une image ne peut pas être enregistrée."""
 
 
-def list_images(folder: str | Path) -> list[Path]:
+def list_images(folder: str | Path, *, recursive: bool = False) -> list[Path]:
     """Liste les images d'un dossier, triées alphabétiquement par nom.
 
     Les extensions acceptées sont jpg, jpeg, png, bmp et webp, sans distinction
-    de casse. Seuls les fichiers directement présents dans le dossier sont pris
-    en compte.
+    de casse. Par défaut, seuls les fichiers directement présents dans le dossier
+    sont pris en compte.
 
     Args:
         folder: Dossier à parcourir.
+        recursive: Si `True`, inclut également les sous-dossiers.
 
     Returns:
         Chemins des images trouvées, dans l'ordre alphabétique.
@@ -41,12 +42,15 @@ def list_images(folder: str | Path) -> list[Path]:
     if not directory.is_dir():
         raise NotADirectoryError(f"Le chemin n'est pas un dossier : '{directory}'.")
 
-    images = [
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-    ]
-    return sorted(images, key=lambda path: (path.name.casefold(), path.name))
+    paths = directory.rglob("*") if recursive else directory.iterdir()
+    images = [path for path in paths if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS]
+    return sorted(
+        images,
+        key=lambda path: (
+            path.relative_to(directory).as_posix().casefold(),
+            path.relative_to(directory).as_posix(),
+        ),
+    )
 
 
 def read_image(path: str | Path) -> NDArray[np.uint8]:

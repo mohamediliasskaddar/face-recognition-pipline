@@ -13,7 +13,7 @@ import src.main as main_module
 import src.pipeline as pipeline_module
 from src.config import AppConfig, load_config
 from src.detection import DetectedFace
-from src.pipeline import PipelineError, run
+from src.pipeline import PipelineError, run, run_cluster
 from src.types import FaceRecord, MatchResult
 
 
@@ -109,7 +109,7 @@ def pipeline_setup(
     monkeypatch.setattr(
         pipeline_module,
         "list_images",
-        lambda _: [first_image, second_image],
+        lambda _, **kwargs: [first_image, second_image],
     )
     monkeypatch.setattr(
         pipeline_module,
@@ -177,11 +177,15 @@ def test_run_rejects_empty_gallery_and_empty_face_index(
 ) -> None:
     """Le pipeline distingue un dossier vide d'une galerie sans visage indexable."""
     query, gallery, output, config, _ = pipeline_setup
-    monkeypatch.setattr(pipeline_module, "list_images", lambda _: [])
+    monkeypatch.setattr(pipeline_module, "list_images", lambda _, **kwargs: [])
     with pytest.raises(PipelineError, match="Aucune image trouvée"):
         run(query, gallery, output, config)
 
-    monkeypatch.setattr(pipeline_module, "list_images", lambda _: [gallery / "first.jpg"])
+    monkeypatch.setattr(
+        pipeline_module,
+        "list_images",
+        lambda _, **kwargs: [gallery / "first.jpg"],
+    )
     monkeypatch.setattr(pipeline_module, "build_gallery_index", lambda *args, **kwargs: [])
     with pytest.raises(PipelineError, match="Aucun visage exploitable"):
         run(query, gallery, output, config)
@@ -233,6 +237,130 @@ def test_run_rejects_unimplemented_backend(
         run(query, gallery, output, unsupported_config)
 
 
+def test_run_cluster_exports_report_unknown_faces_and_contact_sheets(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+) -> None:
+    """Le mode cluster produit les crops, le rapport et les planches de contact."""
+    _, gallery, output, config, _ = pipeline_setup
+
+    labels = run_cluster(gallery, output, config)
+
+    assert labels.tolist() == [-1, -1]
+    assert (output / "unknown" / "first_face0.jpg").is_file()
+    assert (output / "unknown" / "second_face0.jpg").is_file()
+    assert (output / "report.json").is_file()
+    assert (output / "contact_sheets" / "unknown.png").is_file()
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert report["n_faces"] == 2
+    assert report["n_persons"] == 0
+
+
+def test_run_cluster_rejects_empty_input_directory(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un dossier sans image est distingué d'un dossier sans visage détecté."""
+    _, gallery, output, config, _ = pipeline_setup
+    monkeypatch.setattr(pipeline_module, "list_images", lambda _, **kwargs: [])
+
+    with pytest.raises(PipelineError, match="Aucune image trouvée"):
+        run_cluster(gallery, output, config)
+
+
+def test_run_cluster_indexes_nested_gallery_images(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le mode cluster demande un parcours récursif au listing et à l'indexation."""
+    _, gallery, output, config, records = pipeline_setup
+    recursive_options: list[bool] = []
+
+    def list_nested_images(folder: Path, *, recursive: bool = False) -> list[Path]:
+        recursive_options.append(recursive)
+        return [gallery / "nested" / "first.jpg"]
+
+    def index_nested_images(
+        folder: Path,
+        detector: object,
+        embedder: object,
+        *,
+        use_cache: bool,
+        recursive: bool = False,
+    ) -> list[FaceRecord]:
+        recursive_options.append(recursive)
+        return records[:1]
+
+    monkeypatch.setattr(pipeline_module, "list_images", list_nested_images)
+    monkeypatch.setattr(pipeline_module, "build_gallery_index", index_nested_images)
+
+    run_cluster(gallery, output, config)
+
+    assert recursive_options == [True, True]
+
+
+def test_run_cluster_exports_empty_report_when_no_faces_are_indexed(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Des images sans visage donnent un rapport vide plutôt qu'une fausse erreur."""
+    _, gallery, output, config, _ = pipeline_setup
+    monkeypatch.setattr(pipeline_module, "build_gallery_index", lambda *args, **kwargs: [])
+
+    labels = run_cluster(gallery, output, config)
+
+    assert labels.size == 0
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert report["n_faces"] == 0
+    assert report["folders"]["unknown"]["face_count"] == 0
+    assert (output / "unknown").is_dir()
+
+
+def test_run_cluster_exports_multiple_faces_from_one_image(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chaque visage d'une image multi-visages reçoit son propre crop."""
+    _, gallery, output, config, records = pipeline_setup
+    source = Path(records[0].image_path)
+    multi_face_records = [
+        make_record(source, [1.0, 0.0]),
+        make_record(source, [0.0, 1.0]),
+    ]
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_gallery_index",
+        lambda *args, **kwargs: multi_face_records,
+    )
+
+    run_cluster(gallery, output, config)
+
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert report["n_faces"] == 2
+    assert report["folders"]["unknown"]["face_count"] == 2
+    assert (output / "unknown" / "first_face0.jpg").is_file()
+    assert (output / "unknown" / "first_face1.jpg").is_file()
+
+
+def test_run_cluster_exports_a_single_face(
+    pipeline_setup: tuple[Path, Path, Path, AppConfig, list[FaceRecord]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un dossier avec un seul visage produit un crop et un rapport valides."""
+    _, gallery, output, config, records = pipeline_setup
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_gallery_index",
+        lambda *args, **kwargs: records[:1],
+    )
+
+    labels = run_cluster(gallery, output, config)
+
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert labels.shape == (1,)
+    assert report["n_faces"] == 1
+    assert sum(folder["face_count"] for folder in report["folders"].values()) == 1
+
+
 def test_cli_applies_options_and_returns_success(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -268,6 +396,52 @@ def test_cli_applies_options_and_returns_success(
     assert status == 0
     assert calls[0][0][3].matching.threshold == 0.55
     assert calls[0][1] == {"face_index": 1, "use_cache": False}
+
+
+def test_cli_cluster_applies_clustering_and_organizer_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Le CLI cluster transmet ses seuils, options de sortie et cache."""
+    config = load_config()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(
+        main_module,
+        "run_cluster",
+        lambda *args, **kwargs: calls.append((args, kwargs))
+        or np.asarray([0, 0, -1], dtype=np.int32),
+    )
+
+    status = main_module.main(
+        [
+            "--mode",
+            "cluster",
+            "--input",
+            str(tmp_path / "input"),
+            "--output",
+            str(tmp_path / "output"),
+            "--threshold",
+            "0.7",
+            "--min-face-size",
+            "60",
+            "--margin",
+            "0.3",
+            "--copy-originals",
+            "--no-overwrite",
+            "--no-cache",
+        ]
+    )
+
+    assert status == 0
+    effective_config = calls[0][0][2]
+    assert effective_config.clustering.distance_threshold == 0.7
+    assert effective_config.detection.min_face_size == 60
+    assert effective_config.quality.min_face_size == 60
+    assert effective_config.output.crop_margin == pytest.approx(0.3)
+    assert effective_config.output.copy_originals is True
+    assert effective_config.output.overwrite is False
+    assert calls[0][1] == {"use_cache": False}
 
 
 def test_cli_returns_nonzero_when_pipeline_raises(

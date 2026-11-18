@@ -1,6 +1,7 @@
 """Tests de l'indexation multi-visages et du cache de galerie."""
 
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -10,7 +11,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from src.config import AppConfig, load_config
+from src.config import AppConfig, EmbeddingConfig, load_config
 from src.detection import DetectedFace, FaceDetector
 from src.embedding import FaceEmbedder
 from src.gallery import GalleryCacheError, build_gallery_index, load_cache, save_cache
@@ -61,8 +62,8 @@ class FakeDetector:
 class FakeEmbedder(FaceEmbedder):
     """Embedder factice qui retourne un vecteur unité identifiable par pixel."""
 
-    def __init__(self) -> None:
-        self.config: AppConfig = load_config()
+    def __init__(self, config: AppConfig | None = None) -> None:
+        self.config = config if config is not None else load_config()
         self.embed_calls = 0
 
     def embed(self, aligned_face: NDArray[np.uint8]) -> NDArray[np.float32]:
@@ -115,6 +116,26 @@ def test_build_gallery_index_keeps_every_face_and_skips_empty_or_corrupt_images(
     assert embedder.embed_calls == 3
 
 
+def test_build_gallery_index_can_include_nested_images(tmp_path: Path) -> None:
+    """L'indexation récursive traite les images importées dans les sous-dossiers."""
+    gallery = tmp_path / "gallery"
+    nested = gallery / "folder"
+    nested.mkdir(parents=True)
+    image_path = nested / "one.png"
+    write_marker_image(image_path, 3)
+
+    records = build_gallery_index(
+        gallery,
+        cast(FaceDetector, FakeDetector()),
+        FakeEmbedder(),
+        use_cache=False,
+        recursive=True,
+    )
+
+    assert len(records) == 1
+    assert records[0].image_path == str(image_path)
+
+
 def test_build_gallery_index_reuses_cache_without_reprocessing_images(
     tmp_path: Path,
 ) -> None:
@@ -148,6 +169,42 @@ def test_build_gallery_index_reuses_cache_without_reprocessing_images(
     assert detector.detect_calls == [1]
     assert detector.align_calls == 2
     assert embedder.embed_calls == 2
+
+
+@pytest.mark.parametrize(
+    "embedding_config",
+    [
+        EmbeddingConfig(use_flip=False, use_clahe=False),
+        EmbeddingConfig(use_flip=True, use_clahe=True),
+    ],
+)
+def test_build_gallery_index_invalidates_cache_when_embedding_options_change(
+    tmp_path: Path,
+    embedding_config: EmbeddingConfig,
+) -> None:
+    """Un changement de flip ou de CLAHE invalide les embeddings mis en cache."""
+    gallery = tmp_path / "gallery"
+    gallery.mkdir()
+    write_marker_image(gallery / "one.png", 1)
+    cache_path = tmp_path / "cache" / "embeddings.npz"
+    detector = FakeDetector()
+    default_config = load_config()
+    build_gallery_index(
+        gallery,
+        cast(FaceDetector, detector),
+        FakeEmbedder(default_config),
+        cache_path=cache_path,
+    )
+    changed_config = replace(default_config, embedding=embedding_config)
+
+    build_gallery_index(
+        gallery,
+        cast(FaceDetector, detector),
+        FakeEmbedder(changed_config),
+        cache_path=cache_path,
+    )
+
+    assert detector.detect_calls == [1, 1]
 
 
 def test_build_gallery_index_can_bypass_cache(

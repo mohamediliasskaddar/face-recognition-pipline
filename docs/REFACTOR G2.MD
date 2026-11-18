@@ -89,7 +89,10 @@ Pour gérer occlusions, flou et petits visages, calculer pour chaque visage :
 - taille de la bbox
 - netteté : variance du Laplacien sur le crop (`cv2.Laplacian(gray, cv2.CV_64F).var()`)
 
-`quality_score(face) -> float` et `is_reliable(face, cfg) -> bool`.
+`quality_score(face, cfg) -> float` et `is_reliable(face, cfg) -> bool`.
+Le score est le minimum des rapports entre chaque mesure et son seuil configuré
+(confiance, plus petite dimension de la bbox, netteté) ; un score `>= 1.0`
+signifie que les trois critères sont atteints.
 
 Pourquoi : les visages de mauvaise qualité produisent des embeddings instables qui **polluent** les clusters. On les met de côté pendant le clustering, puis on tente de les rattacher (R4).
 
@@ -122,6 +125,11 @@ Le nombre de personnes est **inconnu** : on ne peut pas utiliser K-Means. Utilis
 **Prompt Copilot**
 > Crée src/clustering.py avec : cluster_faces(embeddings, distance_threshold) via AgglomerativeClustering cosinus average linkage ; compute_centroids ; attach_low_quality(embeddings_low, centroids, threshold) ; merge_close_clusters(centroids, labels, merge_threshold). Retourne un tableau de labels (-1 pour unknown). Ajoute des tests avec des embeddings synthétiques (3 groupes gaussiens).
 
+`compute_centroids` retourne un dictionnaire `label -> centroïde L2 normalisé`.
+`attach_low_quality` retourne un label par embedding, avec `-1` si le meilleur
+cosinus est sous le seuil. `merge_close_clusters` retourne les centroïdes
+fusionnés et les labels remappés ; les fusions transitives sont permises.
+
 **Done quand** : sur des embeddings synthétiques de 3 groupes, on retrouve 3 clusters.
 
 ### R5 – Organisation des dossiers (`organizer.py`)
@@ -129,7 +137,9 @@ Le nombre de personnes est **inconnu** : on ne peut pas utiliser K-Means. Utilis
   - crée `person_XX/` (numérotation par taille décroissante : `person_01` = la personne la plus fréquente) et `unknown/`
   - sauvegarde chaque crop (`crop_face`) avec le nom `<image>_face<i>.jpg`
   - écrit `report.json`
-- Vider/recréer le dossier de sortie proprement (option `--overwrite`) pour éviter les résidus d'une exécution précédente.
+- Accepte `margin=0.25` et `overwrite=False`. Un dossier de sortie non vide est
+  refusé par défaut ; `overwrite=True` le remplace après génération réussie pour
+  éviter les résidus d'une exécution précédente.
 
 **Prompt Copilot**
 > Crée src/organizer.py avec organize(records, labels, output_dir, copy_originals). Les clusters sont numérotés par taille décroissante (person_01 = le plus grand), label -1 va dans unknown/. Écris report.json avec le nombre de personnes et la liste des crops par dossier.
@@ -153,6 +163,13 @@ python -m src.main --mode search --query data/query/p.jpg --gallery data/gallery
 
 Options : `--threshold`, `--min-face-size`, `--margin`, `--copy-originals`, `--overwrite`, `--backend`.
 
+Implémentation : `run_cluster` réutilise l'index/cache et exporte aussi les
+planches de contact à partir du chemin de rapport retourné par l'organiseur.
+Le mode cluster parcourt aussi les sous-dossiers pour traiter les images importées
+avec leur arborescence relative; le mode historique search reste non récursif.
+Le mode CLI `search` reste le défaut pour préserver les appels historiques;
+utiliser explicitement `--mode cluster` pour le nouveau flux.
+
 **Done quand** : une commande produit les dossiers `person_XX/` à partir d'un dossier d'images.
 
 ### R7 – Évaluation (`evaluation.py`)
@@ -170,6 +187,16 @@ Comme il n'y a plus de requête, on évalue la **qualité du regroupement** avec
 
 **Prompt Copilot**
 > Adapte evaluation.py : charge labels.csv (par visage), calcule pureté, ARI, NMI (sklearn.metrics) et B-cubed précision/rappel/F1, puis balaie distance_threshold et trace les courbes avec matplotlib.
+
+Implémentation : `load_face_labels`, `evaluate_clustering`,
+`sweep_clustering_threshold` et `plot_clustering_threshold_sweep` exposent ces
+étapes. `face_index` est zéro-based et suit l'ordre des visages indexés dans
+chaque image; le format historique `filename,person_id` correspond à l'index 0.
+Les seuils par défaut balayent `[0.40, 0.80]`.
+Sur le jeu courant (29 visages annotés), le balayage donne ARI, NMI et B-cubed
+F1 à `1.0` sur toute cette plage, avec 17 personnes détectées pour 18 annotées.
+Il n'y a donc pas de seuil optimal unique sur ce jeu; la configuration conserve
+`0.60` en attendant une galerie plus représentative, notamment multi-visages.
 
 ### R8 – Tests, démo, rapport
 - Tests : dossier vide, image sans visage, image avec plusieurs visages, un seul visage au total, deux personnes très proches.

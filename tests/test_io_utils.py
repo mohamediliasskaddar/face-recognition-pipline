@@ -24,6 +24,19 @@ def test_list_images_filters_extensions_and_sorts_names(tmp_path: Path) -> None:
     ]
 
 
+def test_list_images_can_include_nested_directories_recursively(tmp_path: Path) -> None:
+    """Le mode récursif liste les images des sous-dossiers dans l'ordre relatif."""
+    nested = tmp_path / "folder"
+    nested.mkdir()
+    for path in (tmp_path / "z.jpg", nested / "b.png", nested / "A.JPG"):
+        path.touch()
+
+    assert [
+        path.relative_to(tmp_path).as_posix() for path in list_images(tmp_path, recursive=True)
+    ] == ["folder/A.JPG", "folder/b.png", "z.jpg"]
+    assert [path.name for path in list_images(tmp_path)] == ["z.jpg"]
+
+
 def test_list_images_rejects_missing_folder(tmp_path: Path) -> None:
     """Un dossier manquant produit une erreur explicite."""
     with pytest.raises(FileNotFoundError, match="n'existe pas"):

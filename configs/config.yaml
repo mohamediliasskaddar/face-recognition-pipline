@@ -1,37 +1,37 @@
-#ancienne config:
-# model:
-#   backend: insightface
-#   name: buffalo_l
-#   det_size: [640, 640]
-#   providers: [CPUExecutionProvider]
+# Parametres historiques du mode recherche.
+model:
+  backend: insightface
+  name: buffalo_l
+  det_size: [640, 640]
+  providers: [CPUExecutionProvider]
 
-# detection:
-#   min_det_score: 0.5
-#   min_face_size: 40
+detection:
+  min_det_score: 0.5
+  min_face_size: 40
 
-# matching:
-#   threshold: 0.40
-#   use_query_expansion: true
-#   expansion_top_k: 3
-#   use_gallery_clustering: false
-#   cluster_distance_threshold: 0.60
+matching:
+  threshold: 0.40
+  use_query_expansion: true
+  expansion_top_k: 3
+  use_gallery_clustering: false
+  cluster_distance_threshold: 0.60
 
-# paths:
-#   cache_dir: data/cache
-#   output_dir: outputs
+paths:
+  cache_dir: data/cache
+  output_dir: outputs
 
-#nouvelle config:
+# Parametres G2 conserves pour les prochaines etapes.
 quality:
   min_det_score: 0.6
   min_face_size: 50
-  min_sharpness: 40.0        # variance du Laplacien, à calibrer
+  min_sharpness: 40.0
 
 embedding:
   use_flip: true
   use_clahe: false
 
 clustering:
-  method: agglomerative       # agglomerative | dbscan
+  method: agglomerative
   distance_threshold: 0.60
   attach_threshold: 0.35
   merge_threshold: 0.55

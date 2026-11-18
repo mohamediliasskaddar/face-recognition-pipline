@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import cv2
@@ -12,7 +13,7 @@ import src.pipeline as pipeline_module
 from src.config import AppConfig, load_config
 from src.detection import FaceDetector
 from src.embedding import InsightFaceEmbedder
-from src.pipeline import PipelineError, run
+from src.pipeline import PipelineError, run, run_cluster
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 MODEL_FILES = (
@@ -145,3 +146,60 @@ def test_real_pipeline_handles_four_gallery_images_and_multi_face_query(
             config,
             use_cache=False,
         )
+
+
+def test_real_cluster_handles_no_face_multi_face_and_single_face_inputs(
+    real_backend: tuple[AppConfig, FaceDetector, InsightFaceEmbedder],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Le clustering réel traite les dossiers sans visage, multi-visages et mono-visage."""
+    config, detector, embedder = real_backend
+    fixture_image = cv2.imread(
+        str(FIXTURE_DIR / "three-image-fusionne.jpg"),
+        cv2.IMREAD_COLOR,
+    )
+    assert fixture_image is not None
+    panel_width = fixture_image.shape[1] // 3
+    single_face_image = fixture_image[:, :panel_width]
+    no_face_image = _read_fixture("pic-with-no-face.png", max_dimension=640)
+
+    gallery = tmp_path / "mixed_gallery"
+    gallery.mkdir()
+    assert cv2.imwrite(str(gallery / "multi.png"), fixture_image)
+    assert cv2.imwrite(str(gallery / "landscape.png"), no_face_image)
+
+    def reuse_embedder(_: AppConfig) -> InsightFaceEmbedder:
+        return embedder
+
+    def reuse_detector(
+        _: AppConfig,
+        *,
+        analysis: object,
+    ) -> FaceDetector:
+        assert analysis is detector.analysis
+        return detector
+
+    monkeypatch.setattr(pipeline_module, "InsightFaceEmbedder", reuse_embedder)
+    monkeypatch.setattr(pipeline_module, "FaceDetector", reuse_detector)
+
+    run_cluster(gallery, tmp_path / "mixed_output", config, use_cache=False)
+
+    mixed_report = json.loads(
+        (tmp_path / "mixed_output" / "report.json").read_text(encoding="utf-8")
+    )
+    mixed_crops = [crop for folder in mixed_report["folders"].values() for crop in folder["crops"]]
+    assert mixed_report["n_faces"] == 3
+    assert len(mixed_crops) == 3
+    assert all(Path(crop["source_image"]).name == "multi.png" for crop in mixed_crops)
+    assert (tmp_path / "mixed_output" / "contact_sheets").is_dir()
+
+    single_gallery = tmp_path / "single_gallery"
+    single_gallery.mkdir()
+    assert cv2.imwrite(str(single_gallery / "single.png"), single_face_image)
+    run_cluster(single_gallery, tmp_path / "single_output", config, use_cache=False)
+
+    single_report = json.loads(
+        (tmp_path / "single_output" / "report.json").read_text(encoding="utf-8")
+    )
+    assert single_report["n_faces"] == 1
