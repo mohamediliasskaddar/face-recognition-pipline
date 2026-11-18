@@ -9,3 +9,5 @@ outputs/
 z-archive/
 venv/
 .agents/
+data/test_lfw_experiment_v0/
+data/test_lfw_experiment_v1/
