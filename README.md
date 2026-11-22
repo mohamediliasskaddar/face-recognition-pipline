@@ -43,7 +43,10 @@ Depuis la racine du dépôt et après installation de `requirements.txt`, lancez
 streamlit run app/streamlit_app.py
 ```
 
-L'interface permet d'importer une image requête, de sélectionner un dossier de
-galerie local, d'ajuster le seuil cosinus et de télécharger les résultats en ZIP.
-Les recherches sont exécutées localement; le cache des embeddings de galerie
-peut être activé ou désactivé dans les paramètres.
+L'interface permet d'importer une image requête ou un dossier de référence,
+d'importer un dossier à trier par personne, d'ajuster les seuils et de
+télécharger les résultats en ZIP. Un fichier de labels CSV peut être importé
+dans la barre latérale; à défaut, `data/labels.csv` est utilisé.
+Le bouton « Réinitialiser l’interface » efface les résultats et sélections pour
+changer rapidement de test. Les recherches sont exécutées localement; le cache
+des embeddings de galerie peut être activé ou désactivé dans les paramètres.

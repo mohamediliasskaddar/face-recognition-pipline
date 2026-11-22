@@ -1,0 +1,60 @@
+:root {
+  --trombiai-navy: #0c2c4a;
+  --trombiai-cyan: #20b8d0;
+  --trombiai-ice: #f4f9fb;
+  --trombiai-border: #dce9ef;
+  --trombiai-ink: #243f55;
+}
+
+.stApp {
+  color: var(--trombiai-ink);
+  font-family: Inter, "Segoe UI", sans-serif;
+}
+
+[data-testid="stAppViewContainer"] {
+  background: linear-gradient(160deg, #f8fbfc 0%, #ffffff 48%, var(--trombiai-ice) 100%);
+}
+
+[data-testid="stHeader"] {
+  background: transparent;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--trombiai-navy);
+  letter-spacing: -0.025em;
+}
+
+[data-testid="stSidebar"] {
+  border-right: 1px solid var(--trombiai-border);
+}
+
+[data-testid="stMetric"] {
+  border: 1px solid var(--trombiai-border);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 1rem;
+}
+
+[data-testid="stExpander"] {
+  border-color: var(--trombiai-border);
+  border-radius: 12px;
+}
+
+.stButton button,
+[data-testid="stFormSubmitButton"] button,
+[data-testid="stDownloadButton"] button {
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.stButton button[kind="primary"],
+[data-testid="stFormSubmitButton"] button[kind="primary"] {
+  border-color: var(--trombiai-cyan);
+  background: var(--trombiai-navy);
+}
+
+[data-testid="stImage"] img {
+  border-radius: 14px;
+}

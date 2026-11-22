@@ -210,3 +210,22 @@ Il n'y a donc pas de seuil optimal unique sur ce jeu; la configuration conserve
 - **Visages de petite taille ou masqués** : sans filtre qualité, ils créent de faux clusters « petits visages ».
 - **Cache** : si l'on change `min_face_size` ou `use_flip`, invalider le cache des embeddings.
 - **Nommage** : toujours garder la trace image source → visage → dossier dans `report.json` (utile pour déboguer et pour la démo).
+
+
+
+
+
+## Fonctionnalités complémentaires à ajouter v2:
+
+- Gestion de la réinitialisation (Reset) : ne fonctionne pas correctemnet, meme apres avoir clicker sur le btn, les images selctionee dans "le Dossier de référence à classer" je dois les eliminer une par une, je veux un reset total donc meme les images vont etre eliminer pour selectioner un nouveaux dossier d'images 
+
+- je veux aussi diviser un peut le dahsbord streilite parce que il contint tt les donnes, fonctions, etc, je veux le disier an qlq fichier que le le fichier [text](../app/streamlit_app.py) va lui appell etc pour mieux organiser la partie appp ui etc et mieux la gerer, 
+
+- nommer le dahsbord de  l'application comme cela:  TrombiAI pour la rendre plsu profetionelle comme quoi il a une identite visul etc, une banner etait prepaer dans le fichier app/public/banner.png poru la meme a l'enter de l'app 
+
+- je propose de me faire une pipeline en utilsant htmk css js descriptive de ce que l'app fait exactement pour chauque partie que sa soit tri ou clustring avec spefictaion de lentrer et la sotier (inoput , ouptut) de chaque partie du pipline afin que mieux visualiser les choses etc, et me servir aussi a explaiuer cela apres 
+
+- me donnes les commandes/ ou un fichier englobnte pour faire la sortie/ le role de chaue partie dans src/ juste celle qui font qlq choses de valuer comme detection, matching, identify et autre etc 
+ 
+
+

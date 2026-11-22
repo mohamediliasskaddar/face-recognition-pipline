@@ -45,7 +45,6 @@ def _create_analysis(model_config: ModelConfig) -> FaceAnalysisBackend:
     except ImportError as error:
         raise ImportError(
             "InsightFace est requis pour la détection. Installez les dépendances "
-            "du projet depuis requirements.txt."
         ) from error
 
     analysis = FaceAnalysis(

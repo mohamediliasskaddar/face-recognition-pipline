@@ -1,5 +1,6 @@
 """Tests des artefacts ZIP produits par l'interface Streamlit."""
 
+import ast
 import json
 import subprocess
 import sys
@@ -12,8 +13,40 @@ import numpy as np
 import pytest
 
 from app import streamlit_app
+from app.ui import services
 from src.config import AppConfig, load_config
 from src.types import MatchResult
+
+
+def test_brand_header_falls_back_to_text_when_banner_is_missing(tmp_path: Path) -> None:
+    """L'en-tête reste affiché même si l'image de bannière n'existe pas."""
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_function(
+        lambda: streamlit_app.render_header(tmp_path / "missing-banner.png")
+    ).run()
+
+    assert not app.exception
+    assert [item.value for item in app.title] == ["TrombiAI"]
+    assert len(app.get("imgs")) == 0
+
+
+def test_ui_services_do_not_import_streamlit_or_access_session_state() -> None:
+    """Les services restent indépendants de Streamlit et l'état reste encapsulé."""
+    app_dir = Path(__file__).parents[1] / "app"
+    services_tree = ast.parse((app_dir / "ui" / "services.py").read_text(encoding="utf-8"))
+    components_source = (app_dir / "ui" / "components.py").read_text(encoding="utf-8")
+    imported_modules = {
+        alias.name
+        for node in ast.walk(services_tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+
+    assert not any(
+        name == "streamlit" or name.startswith("streamlit.") for name in imported_modules
+    )
+    assert "st.session_state" not in components_source
 
 
 def test_build_results_archive_includes_matches_annotations_and_reports(
@@ -35,7 +68,7 @@ def test_build_results_archive_includes_matches_annotations_and_reports(
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
-    archive_bytes = streamlit_app.build_results_archive(tmp_path)
+    archive_bytes = services.build_results_archive(tmp_path)
 
     with ZipFile(BytesIO(archive_bytes)) as archive:
         assert set(archive.namelist()) == set(files)
@@ -45,7 +78,7 @@ def test_build_results_archive_includes_matches_annotations_and_reports(
 def test_build_results_archive_rejects_missing_pipeline_output(tmp_path: Path) -> None:
     """Une archive vide n'est jamais présentée comme un téléchargement valide."""
     with pytest.raises(FileNotFoundError, match="Aucun résultat exportable"):
-        streamlit_app.build_results_archive(tmp_path)
+        services.build_results_archive(tmp_path)
 
 
 def test_build_cluster_archive_includes_crops_contact_sheets_and_report(
@@ -63,7 +96,7 @@ def test_build_cluster_archive_includes_crops_contact_sheets_and_report(
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
 
-    archive_bytes = streamlit_app.build_cluster_archive(tmp_path)
+    archive_bytes = services.build_cluster_archive(tmp_path)
 
     with ZipFile(BytesIO(archive_bytes)) as archive:
         assert set(archive.namelist()) == set(files)
@@ -74,9 +107,39 @@ def test_image_validation_accepts_real_fixture_and_rejects_corrupt_bytes() -> No
     """L'aperçu accepte une image décodable et refuse les données non-image."""
     fixture_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
 
-    assert streamlit_app._is_valid_image(fixture_path.read_bytes())
-    assert not streamlit_app._is_valid_image(b"this is not an image")
-    assert not streamlit_app._is_valid_image(b"")
+    assert services.is_valid_image(fixture_path.read_bytes())
+    assert not services.is_valid_image(b"this is not an image")
+    assert not services.is_valid_image(b"")
+
+
+def test_resolve_labels_csv_uses_default_when_no_upload(tmp_path: Path) -> None:
+    """Sans upload, l'application conserve le labels.csv du projet."""
+    labels_path, source_label = services.resolve_labels_csv(
+        None,
+        tmp_path,
+    )
+
+    assert labels_path == services.DEFAULT_LABELS_PATH
+    assert "data/labels.csv" in source_label
+
+
+def test_resolve_labels_csv_accepts_uploaded_csv(tmp_path: Path) -> None:
+    """Un CSV importé est écrit et validé avant utilisation."""
+
+    class UploadedCsv:
+        name = "custom_labels.csv"
+
+        @staticmethod
+        def getvalue() -> bytes:
+            return b"filename,face_index,person_id\nperson.jpg,0,Person 01\n"
+
+    labels_path, source_label = services.resolve_labels_csv(
+        UploadedCsv(),
+        tmp_path,
+    )
+
+    assert labels_path.read_text(encoding="utf-8").startswith("filename,face_index")
+    assert source_label == "upload: custom_labels.csv"
 
 
 def test_write_uploaded_gallery_preserves_nested_paths(tmp_path: Path) -> None:
@@ -84,7 +147,7 @@ def test_write_uploaded_gallery_preserves_nested_paths(tmp_path: Path) -> None:
     image_path = Path(__file__).parent / "fixtures" / "pic-with-no-face.png"
     gallery = tmp_path / "gallery"
 
-    count = streamlit_app._write_uploaded_gallery(
+    count = services.write_uploaded_gallery(
         [("folder/landscape.png", image_path.read_bytes())],
         gallery,
     )
@@ -110,7 +173,7 @@ def test_write_uploaded_gallery_rejects_invalid_files(
 ) -> None:
     """Les chemins dangereux, formats inconnus et octets corrompus sont refusés."""
     with pytest.raises(ValueError, match=message):
-        streamlit_app._write_uploaded_gallery([(name, contents)], tmp_path / "gallery")
+        services.write_uploaded_gallery([(name, contents)], tmp_path / "gallery")
 
 
 def test_write_uploaded_gallery_rejects_duplicate_paths(tmp_path: Path) -> None:
@@ -119,7 +182,7 @@ def test_write_uploaded_gallery_rejects_duplicate_paths(tmp_path: Path) -> None:
     contents = image_path.read_bytes()
 
     with pytest.raises(ValueError, match="même chemin"):
-        streamlit_app._write_uploaded_gallery(
+        services.write_uploaded_gallery(
             [("same.png", contents), ("same.png", contents)],
             tmp_path / "gallery",
         )
@@ -186,8 +249,8 @@ def test_run_cluster_processes_uploaded_directory_and_sanitizes_report(
         )
         return np.asarray([0], dtype=np.int32)
 
-    monkeypatch.setattr(streamlit_app, "run_cluster", fake_run_cluster)
-    report, contact_sheets, archive = streamlit_app._run_cluster(
+    monkeypatch.setattr(services, "run_cluster", fake_run_cluster)
+    report, contact_sheets, archive = services.run_cluster_uploads(
         [("nested/landscape.png", uploaded_bytes)],
         load_config(),
         0.45,
@@ -246,11 +309,11 @@ def test_run_search_calls_pipeline_and_packages_its_outputs(
         (output_dir / "report.json").write_text('{"n_matches": 1}', encoding="utf-8")
         return [MatchResult(str(matched_image), 0.9, 0)]
 
-    monkeypatch.setattr(streamlit_app, "run", fake_run)
+    monkeypatch.setattr(services, "run", fake_run)
     config = load_config()
     uploaded_bytes = b"uploaded image bytes"
 
-    matches, grid_bytes, archive_bytes = streamlit_app._run_search(
+    matches, grid_bytes, archive_bytes = services.run_search(
         uploaded_bytes,
         "query.png",
         gallery,
@@ -289,12 +352,13 @@ def test_streamlit_dashboard_renders_both_modes_and_requires_upload(
         "from streamlit.testing.v1 import AppTest\n"
         "app = AppTest.from_file(sys.argv[1], default_timeout=30).run()\n"
         "assert not app.exception\n"
-        "assert [item.value for item in app.title] == ['Tri et recherche de visages']\n"
+        "assert [item.value for item in app.title] == ['TrombiAI']\n"
+        "assert 'Trie tes photos par personne, automatiquement' in [item.value for item in app.caption]\n"
         "assert [item.value for item in app.header] == ['Tri des visages par personne']\n"
         "assert [item.label for item in app.slider] == [\n"
         "    'Distance cosinus', 'Taille minimale du visage (pixels)', 'Marge autour des crops'\n"
         "]\n"
-        "assert app.get('file_uploader')[0].label == 'Dossier d’images à classer'\n"
+        "assert app.get('file_uploader')[0].label == 'Dossier de référence à classer'\n"
         "app.button[0].click().run()\n"
         "assert not app.exception\n"
         "assert [item.value for item in app.error] == [\n"
