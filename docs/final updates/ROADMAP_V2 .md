@@ -8,7 +8,7 @@
 
 - [ ] V0 – Préparation (branche, tag, état des lieux)
 - [x] V1 – Découpage de l'interface Streamlit (4 fichiers)
-- [ ] V2 – Identité visuelle « TrombiAI » (nom + bannière)
+- [x] V2 – Identité visuelle « TrombiAI » (nom + bannière)
 - [ ] V3 – Reset total fiable
 - [ ] V4 – Commande de trace du pipeline (sorties de chaque étape)
 - [ ] V5 – Page HTML/CSS/JS qui explique le pipeline

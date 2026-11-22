@@ -6,6 +6,7 @@ import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import cv2
@@ -13,7 +14,7 @@ import numpy as np
 import pytest
 
 from app import streamlit_app
-from app.ui import services
+from app.ui import services, state
 from src.config import AppConfig, load_config
 from src.types import MatchResult
 
@@ -22,9 +23,15 @@ def test_brand_header_falls_back_to_text_when_banner_is_missing(tmp_path: Path) 
     """L'en-tête reste affiché même si l'image de bannière n'existe pas."""
     from streamlit.testing.v1 import AppTest
 
-    app = AppTest.from_function(
-        lambda: streamlit_app.render_header(tmp_path / "missing-banner.png")
-    ).run()
+    assert streamlit_app.APP_NAME == "TrombiAI"
+    assert streamlit_app.APP_VERSION == "2.0"
+    missing_banner = tmp_path / "missing-banner.png"
+    script = (
+        "from pathlib import Path\n"
+        "from app import streamlit_app\n"
+        f"streamlit_app.render_header(Path({str(missing_banner)!r}))\n"
+    )
+    app = AppTest.from_string(script).run()
 
     assert not app.exception
     assert [item.value for item in app.title] == ["TrombiAI"]
@@ -47,6 +54,61 @@ def test_ui_services_do_not_import_streamlit_or_access_session_state() -> None:
         name == "streamlit" or name.startswith("streamlit.") for name in imported_modules
     )
     assert "st.session_state" not in components_source
+
+
+def test_reset_all_deletes_session_workdir_and_rotates_uploader_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le reset supprime son dossier, réinitialise les résultats et change de clé."""
+    temp_root = tmp_path.resolve()
+    workdir = temp_root / "trombiai_test-session"
+    workdir.mkdir()
+    (workdir / "upload.jpg").write_bytes(b"temporary upload")
+    session_state = {
+        **state.DEFAULTS,
+        "uploader_key": 4,
+        "run_id": "cluster_1",
+        "workdir": str(workdir),
+        state.CLUSTER_RESULT_STATE_KEY: {"report": {}},
+    }
+    toasts: list[str] = []
+    monkeypatch.setattr(state, "TEMP_ROOT", temp_root)
+    monkeypatch.setattr(
+        state,
+        "st",
+        SimpleNamespace(session_state=session_state, toast=toasts.append),
+    )
+
+    state.reset_all()
+
+    assert not workdir.exists()
+    assert session_state["uploader_key"] == 5
+    assert session_state["run_id"] is None
+    assert session_state["workdir"] is None
+    assert session_state[state.CLUSTER_RESULT_STATE_KEY] is None
+    assert toasts == ["Session réinitialisée"]
+
+
+def test_reset_all_refuses_to_delete_outside_session_temp_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Le reset refuse un chemin qui n'est pas le dossier temporaire de session."""
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    outside_workdir = tmp_path / "not-a-session"
+    outside_workdir.mkdir()
+    marker = outside_workdir / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    session_state = {**state.DEFAULTS, "workdir": str(outside_workdir)}
+    monkeypatch.setattr(state, "TEMP_ROOT", temp_root)
+    monkeypatch.setattr(state, "st", SimpleNamespace(session_state=session_state))
+
+    with pytest.raises(ValueError, match="Refus de supprimer"):
+        state.reset_all()
+
+    assert marker.read_text(encoding="utf-8") == "keep"
 
 
 def test_build_results_archive_includes_matches_annotations_and_reports(
@@ -256,9 +318,12 @@ def test_run_cluster_processes_uploaded_directory_and_sanitizes_report(
         0.45,
         60,
         0.3,
+        tmp_path / "session-workdir",
     )
 
     assert set(calls["files"]) == {"nested", "nested/landscape.png"}
+    assert (tmp_path / "session-workdir" / "gallery" / "nested" / "landscape.png").is_file()
+    assert (tmp_path / "session-workdir" / "output" / "report.json").is_file()
     assert calls["distance_threshold"] == 0.45
     assert calls["min_face_size"] == 60
     assert calls["margin"] == pytest.approx(0.3)
@@ -320,6 +385,7 @@ def test_run_search_calls_pipeline_and_packages_its_outputs(
         config,
         0.73,
         False,
+        tmp_path / "session-workdir",
     )
 
     assert pipeline_call["gallery"] == gallery
@@ -327,6 +393,8 @@ def test_run_search_calls_pipeline_and_packages_its_outputs(
     assert pipeline_call["use_cache"] is False
     assert pipeline_call["query_bytes"] == uploaded_bytes
     assert pipeline_call["query_suffix"] == ".png"
+    assert (tmp_path / "session-workdir" / "query.png").is_file()
+    assert (tmp_path / "session-workdir" / "output" / "report.json").is_file()
     assert matches == [
         {
             "filename": "match.jpg",
@@ -353,6 +421,7 @@ def test_streamlit_dashboard_renders_both_modes_and_requires_upload(
         "app = AppTest.from_file(sys.argv[1], default_timeout=30).run()\n"
         "assert not app.exception\n"
         "assert [item.value for item in app.title] == ['TrombiAI']\n"
+        "assert app.get_by_key('uploader_0') is not None\n"
         "assert 'Trie tes photos par personne, automatiquement' in [item.value for item in app.caption]\n"
         "assert [item.value for item in app.header] == ['Tri des visages par personne']\n"
         "assert [item.label for item in app.slider] == [\n"
@@ -370,6 +439,11 @@ def test_streamlit_dashboard_renders_both_modes_and_requires_upload(
         "    'Recherche faciale dans une galerie locale'\n"
         "]\n"
         "assert [item.label for item in app.slider] == ['Seuil de similarité cosinus']\n"
+        "reset_button = next(button for button in app.button if button.label == 'Réinitialiser l’interface')\n"
+        "reset_button.click().run()\n"
+        "assert not app.exception\n"
+        "assert app.session_state['uploader_key'] == 1\n"
+        "assert app.get_by_key('uploader_1') is not None\n"
     )
 
     completed = subprocess.run(

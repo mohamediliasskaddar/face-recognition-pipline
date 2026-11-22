@@ -51,7 +51,7 @@ def _render_cluster_dashboard(config: services.AppConfig) -> None:
         "Dossier de référence à classer",
         type=services.SUPPORTED_UPLOAD_TYPES,
         accept_multiple_files="directory",
-        key="face_cluster_reference_upload",
+        key=f"uploader_{state.get_uploader_key()}",
         help=(
             "Choisissez un dossier contenant des images JPG, PNG, BMP ou WebP. "
             "Les sous-dossiers sont conservés."
@@ -80,6 +80,7 @@ def _render_cluster_dashboard(config: services.AppConfig) -> None:
                         distance_threshold,
                         min_face_size,
                         margin,
+                        state.new_run_dir("cluster"),
                     )
                 state.set_value(
                     state.CLUSTER_RESULT_STATE_KEY,
@@ -115,7 +116,7 @@ def _render_search_dashboard(config: services.AppConfig) -> None:
             "Dossier de référence",
             type=services.SUPPORTED_UPLOAD_TYPES,
             accept_multiple_files="directory",
-            key="face_reference_upload",
+            key=f"gallery_uploader_{state.get_uploader_key()}",
             help=(
                 "Importez directement une galerie locale. "
                 "Lorsqu'il est sélectionné, il remplace le chemin ci-dessus."
@@ -139,6 +140,7 @@ def _render_search_dashboard(config: services.AppConfig) -> None:
         uploaded_file = render_uploader(
             "Image requête",
             type=services.SUPPORTED_UPLOAD_TYPES,
+            key=f"query_uploader_{state.get_uploader_key()}",
             help="Formats acceptés : JPG, PNG, BMP et WebP.",
         )
         submitted = st.form_submit_button(
@@ -164,38 +166,39 @@ def _render_search_dashboard(config: services.AppConfig) -> None:
         else:
             try:
                 if reference_files:
-                    with TemporaryDirectory(prefix="face-reference-streamlit-") as temporary_dir:
-                        gallery_dir = Path(temporary_dir) / "gallery"
-                        reference_images = [
-                            (reference_file.name, reference_file.getvalue())
-                            for reference_file in reference_files
-                        ]
-                        services.write_uploaded_gallery(reference_images, gallery_dir)
-                        gallery_images = services.list_images(gallery_dir)
-                        if not gallery_images:
-                            st.error("Le dossier importé ne contient aucune image prise en charge.")
-                        else:
-                            with st.spinner(
-                                f"Recherche dans {len(gallery_images)} image(s)… "
-                                "La première exécution peut charger les modèles."
-                            ):
-                                matches, grid_bytes, archive_bytes = services.run_search(
-                                    uploaded_file.getvalue(),
-                                    uploaded_file.name,
-                                    gallery_dir,
-                                    config,
-                                    threshold,
-                                    use_cache,
-                                )
-                            state.set_value(
-                                state.RESULT_STATE_KEY,
-                                {
-                                    "matches": matches,
-                                    "grid": grid_bytes,
-                                    "archive": archive_bytes,
-                                    "threshold": threshold,
-                                },
+                    workdir = state.new_run_dir("search")
+                    gallery_dir = workdir / "gallery"
+                    reference_images = [
+                        (reference_file.name, reference_file.getvalue())
+                        for reference_file in reference_files
+                    ]
+                    services.write_uploaded_gallery(reference_images, gallery_dir)
+                    gallery_images = services.list_images(gallery_dir)
+                    if not gallery_images:
+                        st.error("Le dossier importé ne contient aucune image prise en charge.")
+                    else:
+                        with st.spinner(
+                            f"Recherche dans {len(gallery_images)} image(s)… "
+                            "La première exécution peut charger les modèles."
+                        ):
+                            matches, grid_bytes, archive_bytes = services.run_search(
+                                uploaded_file.getvalue(),
+                                uploaded_file.name,
+                                gallery_dir,
+                                config,
+                                threshold,
+                                use_cache,
+                                workdir,
                             )
+                        state.set_value(
+                            state.RESULT_STATE_KEY,
+                            {
+                                "matches": matches,
+                                "grid": grid_bytes,
+                                "archive": archive_bytes,
+                                "threshold": threshold,
+                            },
+                        )
                 else:
                     gallery_dir = Path(gallery_value).expanduser().resolve()
                     if not gallery_dir.is_dir():
@@ -207,6 +210,7 @@ def _render_search_dashboard(config: services.AppConfig) -> None:
                                 "Le dossier sélectionné ne contient aucune image prise en charge."
                             )
                         else:
+                            workdir = state.new_run_dir("search")
                             with st.spinner(
                                 f"Recherche dans {len(gallery_images)} image(s)… "
                                 "La première exécution peut charger les modèles."
@@ -218,6 +222,7 @@ def _render_search_dashboard(config: services.AppConfig) -> None:
                                     config,
                                     threshold,
                                     use_cache,
+                                    workdir,
                                 )
                             state.set_value(
                                 state.RESULT_STATE_KEY,
@@ -249,7 +254,7 @@ def render_sidebar() -> str:
         uploaded_labels = render_uploader(
             "Fichier de labels",
             type=["csv"],
-            key="face_labels_upload",
+            key=f"labels_uploader_{state.get_uploader_key()}",
             help="CSV filename,face_index,person_id (historique : filename,person_id).",
         )
         if uploaded_labels is not None:
@@ -268,9 +273,12 @@ def render_sidebar() -> str:
             st.caption("Aucun labels.csv par défaut trouvé.")
 
         st.divider()
-        if st.button("Réinitialiser l’interface", width="stretch"):
-            state.reset_all()
-            st.rerun()
+        st.button(
+            "Réinitialiser l’interface",
+            on_click=state.reset_all,
+            type="secondary",
+            width="stretch",
+        )
     return mode
 
 

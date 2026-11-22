@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image, UnidentifiedImageError
@@ -187,6 +186,7 @@ def run_cluster_uploads(
     distance_threshold: float,
     min_face_size: int,
     margin: float,
+    workdir: str | Path,
 ) -> tuple[dict[str, object], dict[str, bytes], bytes]:
     """Exécute le clustering des images importées et conserve les artefacts en mémoire."""
     if not math.isfinite(distance_threshold) or not 0.0 <= distance_threshold <= 2.0:
@@ -196,51 +196,51 @@ def run_cluster_uploads(
     if not math.isfinite(margin) or margin < 0:
         raise ValueError("La marge doit être un nombre fini positif ou nul.")
 
-    with TemporaryDirectory(prefix="face-cluster-streamlit-") as temporary_dir:
-        temporary_root = Path(temporary_dir)
-        gallery_dir = temporary_root / "gallery"
-        output_dir = temporary_root / "output"
-        write_uploaded_gallery(uploaded_images, gallery_dir)
+    temporary_root = Path(workdir)
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    gallery_dir = temporary_root / "gallery"
+    output_dir = temporary_root / "output"
+    write_uploaded_gallery(uploaded_images, gallery_dir)
 
-        updated_config = replace(
-            config,
-            detection=replace(config.detection, min_face_size=min_face_size),
-            quality=replace(config.quality, min_face_size=min_face_size),
-            clustering=replace(
-                config.clustering,
-                distance_threshold=distance_threshold,
-            ),
-            output=replace(
-                config.output,
-                crop_margin=margin,
-                copy_originals=False,
-                overwrite=True,
-            ),
+    updated_config = replace(
+        config,
+        detection=replace(config.detection, min_face_size=min_face_size),
+        quality=replace(config.quality, min_face_size=min_face_size),
+        clustering=replace(
+            config.clustering,
+            distance_threshold=distance_threshold,
+        ),
+        output=replace(
+            config.output,
+            crop_margin=margin,
+            copy_originals=False,
+            overwrite=True,
         )
-        run_cluster(gallery_dir, output_dir, updated_config, use_cache=False)
+    )
+    run_cluster(gallery_dir, output_dir, updated_config, use_cache=False)
 
-        report_path = output_dir / "report.json"
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        if not isinstance(report, dict) or not isinstance(report.get("folders"), dict):
-            raise TypeError("Le pipeline a généré un rapport de clustering invalide.")
-        for folder_data in report["folders"].values():
-            if not isinstance(folder_data, dict) or not isinstance(folder_data.get("crops"), list):
-                raise TypeError("Le rapport de clustering contient des crops invalides.")
-            for crop in folder_data["crops"]:
-                if not isinstance(crop, dict) or not isinstance(crop.get("source_image"), str):
-                    raise TypeError("Le rapport de clustering contient une source invalide.")
-                source_path = Path(crop["source_image"]).resolve()
-                crop["source_image"] = source_path.relative_to(gallery_dir).as_posix()
-        report_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+    report_path = output_dir / "report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or not isinstance(report.get("folders"), dict):
+        raise TypeError("Le pipeline a généré un rapport de clustering invalide.")
+    for folder_data in report["folders"].values():
+        if not isinstance(folder_data, dict) or not isinstance(folder_data.get("crops"), list):
+            raise TypeError("Le rapport de clustering contient des crops invalides.")
+        for crop in folder_data["crops"]:
+            if not isinstance(crop, dict) or not isinstance(crop.get("source_image"), str):
+                raise TypeError("Le rapport de clustering contient une source invalide.")
+            source_path = Path(crop["source_image"]).resolve()
+            crop["source_image"] = source_path.relative_to(gallery_dir).as_posix()
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
-        contact_sheets = {
-            path.stem: path.read_bytes()
-            for path in sorted((output_dir / "contact_sheets").glob("*.png"))
-        }
-        archive_bytes = build_cluster_archive(output_dir)
+    contact_sheets = {
+        path.stem: path.read_bytes()
+        for path in sorted((output_dir / "contact_sheets").glob("*.png"))
+    }
+    archive_bytes = build_cluster_archive(output_dir)
     return report, contact_sheets, archive_bytes
 
 
@@ -251,38 +251,39 @@ def run_search(
     config: AppConfig,
     threshold: float,
     use_cache: bool,
+    workdir: str | Path,
 ) -> tuple[list[dict[str, str | float | int]], bytes, bytes]:
     """Exécute le pipeline dans un dossier temporaire et prépare les artefacts UI."""
     safe_name = Path(uploaded_name).name
     suffix = Path(safe_name).suffix.lower()
     if suffix.lstrip(".") not in SUPPORTED_UPLOAD_TYPES:
         suffix = ".jpg"
-    with TemporaryDirectory(prefix="face-recognition-streamlit-") as temporary_dir:
-        temporary_root = Path(temporary_dir)
-        query_path = temporary_root / f"query{suffix}"
-        output_dir = temporary_root / "output"
-        query_path.write_bytes(uploaded_bytes)
+    temporary_root = Path(workdir)
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    query_path = temporary_root / f"query{suffix}"
+    output_dir = temporary_root / "output"
+    query_path.write_bytes(uploaded_bytes)
 
-        updated_config = replace(
-            config,
-            matching=replace(config.matching, threshold=threshold),
-        )
-        matches = run(
-            query_path,
-            gallery_dir,
-            output_dir,
-            updated_config,
-            use_cache=use_cache,
-        )
-        archive_bytes = build_results_archive(output_dir)
-        grid_bytes = (output_dir / "result_grid.png").read_bytes()
-        serialized_matches = [
-            {
-                "filename": Path(match.image_path).name,
-                "image_path": match.image_path,
-                "score": match.best_score,
-                "matched_face_index": match.matched_face_index,
-            }
-            for match in matches
-        ]
+    updated_config = replace(
+        config,
+        matching=replace(config.matching, threshold=threshold),
+    )
+    matches = run(
+        query_path,
+        gallery_dir,
+        output_dir,
+        updated_config,
+        use_cache=use_cache,
+    )
+    archive_bytes = build_results_archive(output_dir)
+    grid_bytes = (output_dir / "result_grid.png").read_bytes()
+    serialized_matches = [
+        {
+            "filename": Path(match.image_path).name,
+            "image_path": match.image_path,
+            "score": match.best_score,
+            "matched_face_index": match.matched_face_index,
+        }
+        for match in matches
+    ]
     return serialized_matches, grid_bytes, archive_bytes
